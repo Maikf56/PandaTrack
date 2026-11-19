@@ -143,6 +143,8 @@ class ExecutorConfig:
     switch_wait_s: int = 6
     max_exits: int = 5
     rotate_states: bool = True       # 每次换出口是否随机化州级池顺序
+    ensure_session: bool = True      # 采集前自动拉起未运行的 profile 会话
+    session_start_wait_s: int = 10   # start 后等待会话就绪
 
 
 class ClawExecutor:
@@ -217,13 +219,33 @@ class ClawExecutor:
         except ValueError:
             return raw
 
+    # ---- 会话自愈 ----
+    def _ensure_session(self) -> None:
+        """profile 会话未运行则拉起（生产常驻形态必需，P7-e2e 教训）。
+
+        status 输出含 'status: running' 即认为会话存活；clawctl 命令本身
+        失败（如二进制缺失）不在此处拦截，交给上层错误分类。
+        """
+        if not self.cfg.ensure_session:
+            return
+        try:
+            out = self._claw("status", timeout=30)
+        except Exception:
+            out = ""
+        if "status: running" in out:
+            return
+        self._claw("start", timeout=90)
+        self._sleep(self.cfg.session_start_wait_s)
+
     # ---- 主流程 ----
     def collect_page(self, numbers: list[str]) -> CollectedPage:
         """取得一页（≤35 单号）的真实 USPS 结果；全部候选失败则抛 ProviderError。
 
-        流程（02 §3.1）：换出口 → 出口准入 → 首页暖场 → 跟踪页 → 抓取。
-        challenge/探测失败换下一个候选出口（§5.8），不原地等待挑战通过。
+        流程（02 §3.1）：会话自愈 → 换出口 → 出口准入 → 首页暖场 →
+        跟踪页 → 抓取。challenge/探测失败换下一个候选出口（§5.8），
+        不原地等待挑战通过。
         """
+        self._ensure_session()
         if not numbers or len(numbers) > 35:
             raise ProviderError("not_accepted",
                                 f"Provider 批次须 1~35 条，实际 {len(numbers)}")

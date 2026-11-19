@@ -151,15 +151,29 @@ class TestReclaim:
 
     def test_reclaim_does_not_touch_valid_lease(self, jobs):
         with psycopg.connect(DB_URL) as conn:
+            # 清理本 worker id 的历史残留（此前运行 claim 未释放会形成
+            # 僵尸租约，污染全库计数断言；w1 为测试专用 id）。
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE fetch_job SET state='succeeded', worker_id=NULL,
+                             lease_until=NULL, finished_at=now()
+                       WHERE worker_id='w1'
+                         AND state NOT IN ('succeeded', 'dead_letter')""")
+            conn.commit()
             lease = JobLease(conn, lease_seconds=3600)
-            lease.claim("w1", limit=2)
+            claimed = lease.claim("w1", limit=2)
+            jids = [c["job_id"] for c in claimed]
             conn.commit()
         with psycopg.connect(DB_URL) as conn:
             n = JobLease(conn).reclaim_expired()
             conn.commit()
             # 其他测试可能留下过期租约，这里只要求未误伤本测试的活跃任务。
             with conn.cursor() as cur:
-                cur.execute("SELECT count(*) FROM fetch_job WHERE worker_id='w1' AND lease_until>now()")
+                cur.execute(
+                    """SELECT count(*) FROM fetch_job
+                       WHERE job_id = ANY(%s)
+                         AND worker_id='w1' AND lease_until>now()""",
+                    (jids,))
                 assert cur.fetchone()[0] == 2
 
 

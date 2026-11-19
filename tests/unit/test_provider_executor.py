@@ -32,7 +32,8 @@ class FakeRunner:
 
 
 def cfg(**kw):
-    base = dict(warmup_wait_s=0, page_wait_s=0, switch_wait_s=0)
+    base = dict(warmup_wait_s=0, page_wait_s=0, switch_wait_s=0,
+                ensure_session=False)  # 既有脚本序列不含 status/start
     base.update(kw)
     return ExecutorConfig(**base)
 
@@ -162,3 +163,35 @@ class TestExecutorGuards:
         ex = ClawExecutor(runner, NoopRelayControl(), config=cfg())
         ex.cleanup()
         assert "profiles" in " ".join(runner.calls[-1]) and "rm" in runner.calls[-1]
+
+
+class TestEnsureSession:
+    """会话自愈：collect 前未运行的 profile 自动拉起（P7-e2e）。"""
+
+    def test_running_session_not_restarted(self):
+        runner = FakeRunner(ok_script())
+        ex = ClawExecutor(runner, NoopRelayControl(),
+                          config=cfg(ensure_session=True))
+        # 脚本序列不含 status → 注入：status 在脚本前手动返回 running
+        runner.script.insert(0, ("status", "status: running"))
+        ex.collect_page(NUMBERS)
+        assert not any("start" in argv for argv in runner.calls)
+
+    def test_stopped_session_auto_started(self):
+        runner = FakeRunner(ok_script())
+        ex = ClawExecutor(runner, NoopRelayControl(),
+                          config=cfg(ensure_session=True))
+        runner.script.insert(0, ("start", "endpoint: ws://x"))
+        runner.script.insert(0, ("status", "status: stopped"))
+        ex.collect_page(NUMBERS)
+        started = [argv for argv in runner.calls if "start" in argv]
+        assert started  # start 被调用过一次
+        assert runner.calls[0][-1] == "status"  # 先探测后启动
+        assert runner.calls[1][-1] == "start"
+
+    def test_disabled_ensure_session_skips_status(self):
+        runner = FakeRunner(ok_script())
+        ex = ClawExecutor(runner, NoopRelayControl(),
+                          config=cfg(ensure_session=False))
+        ex.collect_page(NUMBERS)
+        assert not any("status" in argv for argv in runner.calls)
