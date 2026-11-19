@@ -1,0 +1,9 @@
+[Unit]
+Description=PandaTrack 健康巡检（一次执行）
+
+[Service]
+Type=oneshot
+User=ubuntu
+EnvironmentFile=/home/ubuntu/pandatrack/.env
+ExecStart=/home/ubuntu/pandatrack/.venv/bin/python /home/ubuntu/pandatrack/scripts/health_report.py
+# 有 problem 时退出码 1 → systemd 记 failed，便于监控联动。

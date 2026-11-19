@@ -1,0 +1,9 @@
+[Unit]
+Description=PandaTrack 每小时健康巡检计划
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

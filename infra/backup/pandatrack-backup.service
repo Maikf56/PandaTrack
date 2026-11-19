@@ -1,0 +1,7 @@
+[Unit]
+Description=PandaTrack A/B 库备份（一次执行）
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/usr/bin/env bash /home/ubuntu/pandatrack/infra/backup/backup.sh

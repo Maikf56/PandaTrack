@@ -1,0 +1,9 @@
+[Unit]
+Description=PandaTrack 每日备份计划（03:30）
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

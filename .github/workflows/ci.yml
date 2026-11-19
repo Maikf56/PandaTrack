@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      pg-a:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pandatrack_a
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      pg-b:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pandatrack_b
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PT_DB_A_URL: postgres://postgres:postgres@localhost:5432/pandatrack_a
+      PT_DB_B_URL: postgres://postgres:postgres@localhost:5433/pandatrack_b
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "psycopg[binary]>=3.2,<4.0" "pydantic[email]>=2.10,<3.0" \
+            "fastapi>=0.115,<1.0" "httpx>=0.28,<1.0" "structlog>=24.4,<26.0" \
+            "pytest>=8.3,<9.0" "pytest-asyncio>=0.24,<2.0"
+      - name: Apply migrations (A/B)
+        run: |
+          python scripts/migrate.py --database a --url "$PT_DB_A_URL"
+          python scripts/migrate.py --database b --url "$PT_DB_B_URL"
+      - name: Run full backend suite (unit + real-DB integration)
+        run: pytest tests/
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - name: Unit tests (vitest)
+        run: npm test
+      - name: Build (vue-tsc + vite)
+        run: npm run build
