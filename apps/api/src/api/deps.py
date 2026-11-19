@@ -7,7 +7,7 @@ from fastapi import Depends, Request
 
 from pandatrack_common import codes
 
-from api.data import BRepository
+from api.data import BRepository, token_hash
 from api.errors import ApiProblem
 
 SESSION_COOKIE = "pt_session"
@@ -21,6 +21,7 @@ class Subject:
     role: str
     tenant_id: int | None
     admin_id: int | None = None
+    token_hash: str = ""  # 当前会话哈希（设置页会话管理用）
 
 
 def get_repo(request: Request) -> BRepository:
@@ -40,7 +41,7 @@ def current_subject(request: Request,
         raise ApiProblem(codes.SESSION_EXPIRED)
     return Subject(customer_id=s["customer_id"], public_id=s["public_id"],
                    email=s["email"], role=s["role"], tenant_id=s["tenant_id"],
-                   admin_id=s["admin_id"])
+                   admin_id=s["admin_id"], token_hash=token_hash(token))
 
 
 def require_customer(subject: Subject = Depends(current_subject)) -> Subject:

@@ -14,6 +14,7 @@ from typing import Any, Iterator
 import psycopg
 
 from pandatrack_common import codes
+from pandatrack_common.status import TERMINAL_STATUSES
 
 from api.errors import ApiProblem
 
@@ -505,6 +506,463 @@ class BRepository:
                 )
                 rows = cur.fetchall()
         return ([{"audit_id": r[0], "actor_id": r[1], "actor_role": r[2],
-                  "action": r[3], "target": r[4], "detail": r[5],
-                  "created_at": r[6].isoformat() if r[6] else ""}
-                 for r in rows], total)
+                 "action": r[3], "target": r[4], "detail": r[5],
+                 "created_at": r[6].isoformat() if r[6] else ""}
+                for r in rows], total)
+
+    # ============ 次要页面：组与批次 / 导入 / 导出 / 统计 / 设置 ============
+    # （04 §5.8-5.12；b/0004 扩列。全部 tenant scope，对外 public_id。）
+
+    # ---- 组与批次 ----
+    def list_groups(self, customer_id: int) -> list[dict]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT g.group_id, g.public_id, g.name, g.is_default,
+                              g.archived_at, g.created_at,
+                              (SELECT count(*) FROM customer_tracking ct
+                                WHERE ct.group_id = g.group_id) AS tracking_count,
+                              (SELECT count(*) FROM submission_operation so
+                                WHERE so.group_id = g.group_id) AS batch_count
+                       FROM target_group g
+                       WHERE g.customer_id=%s
+                       ORDER BY g.is_default DESC, g.created_at""",
+                    (customer_id,))
+                rows = cur.fetchall()
+                # 最近状态分布：组内单号的投影状态计数。
+                cur.execute(
+                    """SELECT ct.group_id, tp.status, count(*)
+                       FROM customer_tracking ct
+                       JOIN tracking_projection tp
+                         ON tp.customer_tracking_id = ct.customer_tracking_id
+                       WHERE ct.customer_id=%s AND ct.group_id IS NOT NULL
+                       GROUP BY ct.group_id, tp.status""",
+                    (customer_id,))
+                dist: dict[int, dict[str, int]] = {}
+                for gid, status, n in cur.fetchall():
+                    dist.setdefault(gid, {})[status or "other"] = n
+        return [{"id": str(r[1]), "name": r[2], "is_default": r[3],
+                 "archived": r[4] is not None,
+                 "tracking_count": r[6], "batch_count": r[7],
+                 "status_distribution": dist.get(r[0], {}),
+                 "created_at": r[5].isoformat() if r[5] else ""}
+                for r in rows]
+
+    def create_group(self, customer_id: int, name: str) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO target_group (customer_id, name)
+                       VALUES (%s, %s) RETURNING group_id, public_id""",
+                    (customer_id, name))
+                gid, pub = cur.fetchone()
+            conn.commit()
+        return {"id": str(pub), "name": name, "is_default": False,
+                "archived": False, "tracking_count": 0, "batch_count": 0,
+                "status_distribution": {}, "created_at": ""}
+
+    def rename_group(self, customer_id: int, group_public_id: str,
+                     name: str) -> bool:
+        return self._group_update(
+            customer_id, group_public_id,
+            """UPDATE target_group SET name=%s, updated_at=now()
+               WHERE customer_id=%s AND public_id=%s
+               RETURNING group_id""",
+            (name, customer_id, group_public_id))
+
+    def archive_group(self, customer_id: int, group_public_id: str,
+                      archive: bool) -> bool:
+        return self._group_update(
+            customer_id, group_public_id,
+            """UPDATE target_group
+               SET archived_at=%s, updated_at=now()
+               WHERE customer_id=%s AND public_id=%s RETURNING group_id""",
+            (datetime.now(timezone.utc) if archive else None,
+             customer_id, group_public_id))
+
+    def delete_group(self, customer_id: int, group_public_id: str) -> bool:
+        """删除组只清组织关系（成员/批次 group_id 置空），不动事实与账务。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """DELETE FROM target_group
+                       WHERE customer_id=%s AND public_id=%s
+                       RETURNING group_id""",
+                    (customer_id, group_public_id))
+                row = cur.fetchone()
+                if row is None:
+                    return False
+                gid = row[0]
+                cur.execute(
+                    "UPDATE customer_tracking SET group_id=NULL WHERE group_id=%s",
+                    (gid,))
+                cur.execute(
+                    """UPDATE submission_operation SET group_id=NULL
+                       WHERE group_id=%s""", (gid,))
+            conn.commit()
+        return True
+
+    def _group_update(self, customer_id: int, group_public_id: str,
+                      sql: str, params: tuple) -> bool:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                ok = cur.fetchone() is not None
+            conn.commit()
+        return ok
+
+    def ensure_default_group(self, customer_id: int) -> int:
+        """取（或建）客户默认组，返回内部 group_id（04 §5.8）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT group_id FROM target_group
+                       WHERE customer_id=%s AND is_default=true
+                       ORDER BY group_id LIMIT 1""", (customer_id,))
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+                cur.execute(
+                    """INSERT INTO target_group (customer_id, name, is_default)
+                       VALUES (%s, '默认组', true) RETURNING group_id""",
+                    (customer_id,))
+                gid = cur.fetchone()[0]
+            conn.commit()
+        return gid
+
+    def assign_operation_group(self, customer_id: int,
+                               operation_public_id: str, group_id: int) -> None:
+        """批次归组 + 单号补挂组（仅补空缺，不覆盖客户手动分组）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE submission_operation so SET group_id=%s
+                       FROM (SELECT operation_id FROM submission_operation
+                             WHERE public_id=%s AND customer_id=%s) op
+                       WHERE so.operation_id = op.operation_id
+                         AND so.group_id IS NULL""",
+                    (group_id, operation_public_id, customer_id))
+                cur.execute(
+                    """UPDATE customer_tracking ct SET group_id=%s
+                       WHERE ct.customer_id=%s AND ct.group_id IS NULL
+                         AND ct.normalized_number IN (
+                           SELECT si.normalized_number
+                           FROM submission_item si
+                           JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                           JOIN submission_operation so
+                             ON so.operation_id=sb.operation_id
+                           WHERE so.public_id=%s
+                             AND si.normalized_number IS NOT NULL)""",
+                    (group_id, customer_id, operation_public_id))
+            conn.commit()
+
+    def list_batches(self, customer_id: int, *,
+                     group_id: str | None = None,
+                     limit: int = 50) -> list[dict]:
+        """操作（批次）列表：含终态/无投影计数口径（04 §5.8 批次详情）。"""
+        where = "so.customer_id=%s"
+        params: list = [customer_id]
+        if group_id is not None:
+            where += " AND g.public_id=%s"
+            params.append(group_id)
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT so.public_id, so.state, so.total_count,
+                               so.valid_count, so.points_charged,
+                               so.created_at, so.updated_at, g.name
+                        FROM submission_operation so
+                        LEFT JOIN target_group g ON g.group_id=so.group_id
+                        WHERE {where}
+                        ORDER BY so.created_at DESC LIMIT %s""",
+                    (*params, limit))
+                rows = cur.fetchall()
+        return [{"id": str(r[0]), "state": r[1], "total_count": r[2],
+                 "valid_count": r[3], "points_charged": r[4],
+                 "group_name": r[7],
+                 "created_at": r[5].isoformat() if r[5] else "",
+                 "updated_at": r[6].isoformat() if r[6] else ""}
+                for r in rows]
+
+    def batch_detail(self, customer_id: int, operation_public_id: str) -> dict | None:
+        """批次详情：总量/已完成/处理中/暂未获取/失败待处理 + 状态分布。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT operation_id, public_id, state, total_count,
+                              valid_count, invalid_count, points_charged,
+                              created_at, updated_at
+                       FROM submission_operation
+                       WHERE customer_id=%s AND public_id=%s""",
+                    (customer_id, operation_public_id))
+                op = cur.fetchone()
+                if op is None:
+                    return None
+                oid = op[0]
+                cur.execute(
+                    """SELECT count(*) FILTER (WHERE tp.status = ANY(%s)),
+                              count(*) FILTER (WHERE tp.status IS NOT NULL
+                                               AND tp.status != 'other'),
+                              count(*) FILTER (WHERE ct.customer_tracking_id IS NULL)
+                       FROM submission_item si
+                       LEFT JOIN customer_tracking ct
+                         ON ct.customer_id=%s
+                        AND ct.normalized_number=si.normalized_number
+                       LEFT JOIN tracking_projection tp
+                         ON tp.customer_tracking_id=ct.customer_tracking_id
+                       JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                       WHERE sb.operation_id=%s AND si.is_valid=true""",
+                    (list(TERMINAL_STATUSES), customer_id, oid))
+                terminal, processing, missing = cur.fetchone()
+        return {"id": str(op[1]), "state": op[2], "total_count": op[3],
+                "valid_count": op[4], "invalid_count": op[5],
+                "points_charged": op[6],
+                "completed": terminal, "processing": processing,
+                "missing": missing,
+                "created_at": op[7].isoformat() if op[7] else "",
+                "updated_at": op[8].isoformat() if op[8] else ""}
+
+    # ---- 导入任务 ----
+    def list_imports(self, customer_id: int, *,
+                     limit: int = 50) -> list[dict]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT i.public_id, i.file_name, i.status, i.total,
+                              i.done, i.enqueued, i.success_count,
+                              i.failed_count, i.skipped_count,
+                              i.duplicate_count, i.created_at,
+                              so.public_id
+                       FROM import_job i
+                       LEFT JOIN submission_operation so
+                         ON so.operation_id=i.operation_id
+                       WHERE i.customer_id=%s
+                       ORDER BY i.created_at DESC LIMIT %s""",
+                    (customer_id, limit))
+                rows = cur.fetchall()
+        return [{"id": str(r[0]), "file_name": r[1], "status": r[2],
+                 "total": r[3], "done": r[4], "enqueued": r[5],
+                 "success_count": r[6], "failed_count": r[7],
+                 "skipped_count": r[8], "duplicate_count": r[9],
+                 "operation_id": str(r[11]) if r[11] else None,
+                 "created_at": r[10].isoformat() if r[10] else ""}
+                for r in rows]
+
+    # ---- 导出任务（短期有效下载，04 §5.9）----
+    def create_export(self, customer_id: int, *, scope: str,
+                      scope_ref: str | None, export_dir: str) -> dict:
+        """按范围同步生成 CSV（验收区规模），路径不回显，token 短期有效。"""
+        import csv
+        import hashlib
+        import secrets
+        from pathlib import Path
+        rows = self._export_rows(customer_id, scope, scope_ref)
+        token = secrets.token_urlsafe(32)
+        th = hashlib.sha256(token.encode()).hexdigest()
+        directory = Path(export_dir).expanduser()
+        directory.mkdir(parents=True, exist_ok=True)
+        file_name = f"export-{scope}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}.csv"
+        path = directory / f"{secrets.token_hex(8)}.csv"
+        with path.open("w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["normalized_number", "status", "projected_at"])
+            w.writerows(rows)
+        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO export_job (customer_id, status, file_ref,
+                           scope, scope_ref, file_name, row_count, expires_at,
+                           token_hash)
+                       VALUES (%s, 'done', %s, %s, %s, %s, %s, %s, %s)
+                       RETURNING public_id""",
+                    (customer_id, str(path), scope, scope_ref, file_name,
+                     len(rows), expires, th))
+                pub = cur.fetchone()[0]
+            conn.commit()
+        return {"id": str(pub), "scope": scope, "scope_ref": scope_ref,
+                "format": "csv", "file_name": file_name,
+                "row_count": len(rows), "status": "done", "token": token,
+                "expires_at": expires.isoformat(), "created_at": ""}
+
+    def _export_rows(self, customer_id: int, scope: str,
+                     scope_ref: str | None) -> list[tuple]:
+        if scope not in ("all", "group", "batch"):
+            raise ValueError("invalid export scope")
+        where = "ct.customer_id=%s"
+        params: list = [customer_id]
+        if scope == "group":
+            where += " AND g.public_id=%s"
+            params.append(scope_ref)
+        elif scope == "batch":
+            where = """ct.customer_id=%s AND ct.normalized_number IN (
+                         SELECT si.normalized_number FROM submission_item si
+                         JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                         WHERE sb.operation_id=(SELECT operation_id FROM
+                           submission_operation WHERE customer_id=%s
+                           AND public_id=%s))"""
+            params = [customer_id, customer_id, scope_ref]
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT ct.normalized_number, tp.status, tp.projected_at
+                        FROM customer_tracking ct
+                        LEFT JOIN target_group g ON g.group_id=ct.group_id
+                        LEFT JOIN tracking_projection tp
+                          ON tp.customer_tracking_id=ct.customer_tracking_id
+                        WHERE {where} ORDER BY ct.normalized_number""",
+                    params)
+                rows = [(r[0], r[1] or "",
+                         r[2].isoformat() if r[2] else "") for r in cur.fetchall()]
+        return rows
+
+    def list_exports(self, customer_id: int, *, limit: int = 50) -> list[dict]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT public_id, scope, scope_ref, format, file_name,
+                              row_count, status, expires_at, created_at
+                       FROM export_job WHERE customer_id=%s
+                       ORDER BY created_at DESC LIMIT %s""",
+                    (customer_id, limit))
+                rows = cur.fetchall()
+        now = datetime.now(timezone.utc)
+        return [{"id": str(r[0]), "scope": r[1], "scope_ref": r[2],
+                 "format": r[3], "file_name": r[4], "row_count": r[5],
+                 "status": r[6],
+                 "expired": r[7] is not None and r[7] < now,
+                 "expires_at": r[7].isoformat() if r[7] else None,
+                 "created_at": r[8].isoformat() if r[8] else ""}
+                for r in rows]
+
+    def resolve_download(self, customer_id: int, export_public_id: str,
+                         token: str) -> tuple[str, str] | None:
+        """校验 token/过期/归属 → (文件路径, 文件名)；不符返回 None。"""
+        import hashlib
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT file_ref, file_name, token_hash, expires_at, status
+                       FROM export_job
+                       WHERE customer_id=%s AND public_id=%s""",
+                    (customer_id, export_public_id))
+                row = cur.fetchone()
+        if row is None or row[2] is None:
+            return None
+        if row[2] != hashlib.sha256(token.encode()).hexdigest():
+            return None
+        if row[4] != "done" or not row[1]:
+            return None
+        if row[3] is not None and row[3] < datetime.now(timezone.utc):
+            return None
+        return row[0], row[1]
+
+    # ---- 查询统计（服务端口径，前端不推算，04 §5.10）----
+    def stats_summary(self, customer_id: int, *, days: int = 30) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT count(*), coalesce(sum(total_count),0),
+                              coalesce(sum(points_charged),0)
+                       FROM submission_operation
+                       WHERE customer_id=%s
+                         AND created_at > now() - make_interval(days=>%s)""",
+                    (customer_id, days))
+                submissions, tracking_count, charged = cur.fetchone()
+                cur.execute(
+                    """SELECT count(*) FROM billing_charge_window
+                       WHERE customer_id=%s AND active=true
+                         AND charged_at > now() - make_interval(days=>%s)""",
+                    (customer_id, days))
+                waived = cur.fetchone()[0]
+                cur.execute(
+                    """SELECT tp.status, count(*)
+                       FROM tracking_projection tp
+                       JOIN customer_tracking ct
+                         ON ct.customer_tracking_id=tp.customer_tracking_id
+                       WHERE ct.customer_id=%s GROUP BY tp.status""",
+                    (customer_id,))
+                distribution = {r[0] or "other": r[1] for r in cur.fetchall()}
+                cur.execute(
+                    """SELECT date(created_at), count(*)
+                       FROM submission_operation
+                       WHERE customer_id=%s
+                         AND created_at > now() - make_interval(days=>%s)
+                       GROUP BY date(created_at) ORDER BY date(created_at)""",
+                    (customer_id, days))
+                daily = [{"date": str(r[0]), "submissions": r[1]}
+                         for r in cur.fetchall()]
+        return {"days": days, "submissions": submissions,
+                "tracking_count": tracking_count,
+                "points_charged": charged, "waived_count": waived,
+                "status_distribution": distribution, "daily": daily}
+
+    # ---- 设置页（04 §5.12）----
+    def change_password(self, customer_id: int, old_password: str,
+                        new_password: str) -> bool:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT password_hash FROM customer WHERE customer_id=%s",
+                    (customer_id,))
+                row = cur.fetchone()
+                if row is None or not self._verify_password(
+                        old_password, row[0]):
+                    return False
+                cur.execute(
+                    """UPDATE customer SET password_hash=%s, updated_at=now()
+                       WHERE customer_id=%s""",
+                    (self.hash_password(new_password), customer_id))
+            conn.commit()
+        return True
+
+    def list_sessions(self, customer_id: int,
+                      current_token_hash: str) -> list[dict]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT session_id, created_at, expires_at, revoked,
+                              token_hash
+                       FROM session WHERE customer_id=%s
+                       ORDER BY created_at DESC LIMIT 50""",
+                    (customer_id,))
+                rows = cur.fetchall()
+        return [{"id": r[0],
+                 "created_at": r[1].isoformat() if r[1] else "",
+                 "expires_at": r[2].isoformat() if r[2] else "",
+                 "revoked": r[3], "current": r[4] == current_token_hash}
+                for r in rows]
+
+    def revoke_other_sessions(self, customer_id: int,
+                              current_token_hash: str) -> int:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE session SET revoked=true
+                       WHERE customer_id=%s AND token_hash != %s
+                         AND revoked=false""",
+                    (customer_id, current_token_hash))
+                n = cur.rowcount
+            conn.commit()
+        return n
+
+    def get_preferences(self, customer_id: int) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT preferences FROM customer WHERE customer_id=%s",
+                    (customer_id,))
+                row = cur.fetchone()
+        return row[0] if row and row[0] else {}
+
+    def set_preferences(self, customer_id: int, patch: dict) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE customer
+                       SET preferences = coalesce(preferences,'{}') || %s
+                       WHERE customer_id=%s RETURNING preferences""",
+                    (json.dumps(patch), customer_id))
+                row = cur.fetchone()
+            conn.commit()
+        return row[0] if row else {}

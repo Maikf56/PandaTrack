@@ -56,6 +56,16 @@ def create_submission(payload: SubmissionCreate,
                               reason=c.result_code)
         for c in cleaned.candidates if not c.billable
     ]
+    # 04 §5.8：受理后自动挂默认组（后置事务，崩溃最坏情况批次无组可补挂）。
+    try:
+        gid = repo.ensure_default_group(subject.customer_id)
+        repo.assign_operation_group(subject.customer_id,
+                                    outcome.operation_public_id, gid)
+    except Exception:  # 挂组失败不回滚受理（受理已计费），记录后继续
+        import logging
+        logging.getLogger("pandatrack.api.submissions").warning(
+            "group assign failed for operation %s",
+            outcome.operation_public_id, exc_info=True)
     return SubmissionAccepted(
         operation_id=outcome.operation_public_id,
         total_count=outcome.total_count,

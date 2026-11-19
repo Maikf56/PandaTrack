@@ -57,6 +57,13 @@ def seeded():
                 """DELETE FROM idempotency_record WHERE customer_id=%s""", (cid,))
             cur.execute(
                 """DELETE FROM session WHERE customer_id=%s""", (cid,))
+            # b/0004：受理挂默认组后，customer_tracking 也须先清。
+            cur.execute(
+                """DELETE FROM tracking_projection WHERE customer_tracking_id IN
+                     (SELECT customer_tracking_id FROM customer_tracking
+                      WHERE customer_id=%s)""", (cid,))
+            cur.execute(
+                "DELETE FROM customer_tracking WHERE customer_id=%s", (cid,))
             # 所有引用 operation 的子表须先删（按 operation 子查询）。
             sub = "SELECT operation_id FROM submission_operation WHERE customer_id=%s"
             for table in ("charge_reservation", "projection_event", "operation_snapshot",
@@ -74,6 +81,7 @@ def seeded():
                         f"DELETE FROM {table} WHERE operation_id IN ({sub})", (cid,))
             cur.execute(
                 """DELETE FROM submission_operation WHERE customer_id=%s""", (cid,))
+            cur.execute("DELETE FROM target_group WHERE customer_id=%s", (cid,))
             cur.execute("DELETE FROM wallet WHERE customer_id=%s", (cid,))
             cur.execute("DELETE FROM customer WHERE customer_id=%s", (cid,))
             conn.commit()
