@@ -47,6 +47,7 @@ class WorkerSettings:
     sync_interval_s: int = SYNC_INTERVAL_S
     claim_limit: int = CLAIM_LIMIT
     lease_seconds: int = LEASE_SECONDS
+    enqueue_batch: int = 50
     usps_enabled: bool = True
     claw_bin: str = "clawctl"
     claw_profile: str = "smoke1"
@@ -81,6 +82,7 @@ class WorkerSettings:
             sync_interval_s=_int("PT_SYNC_INTERVAL_S", SYNC_INTERVAL_S),
             claim_limit=_int("PT_CLAIM_LIMIT", CLAIM_LIMIT),
             lease_seconds=_int("PT_LEASE_SECONDS", LEASE_SECONDS),
+            enqueue_batch=_int("PT_ENQUEUE_BATCH", 50),
             usps_enabled=_bool("PT_USPS_ENABLED", True),
             claw_bin=_get("PT_CLAW_BIN", "clawctl"),
             claw_profile=_get("PT_CLAW_PROFILE", "smoke1"),
@@ -173,6 +175,7 @@ class CycleReport:
 
     cycle: int = 0
     tick: dict | None = None
+    enqueue_summary: dict | None = None
     sync_rounds: int = 0
     sync_summary: dict | None = None
     error: str | None = None
@@ -181,6 +184,7 @@ class CycleReport:
         return json.dumps(
             {k: v for k, v in {
                 "cycle": self.cycle, "tick": self.tick,
+                "enqueue": self.enqueue_summary,
                 "sync_rounds": self.sync_rounds,
                 "sync_summary": self.sync_summary,
                 "error": self.error}.items() if v is not None},
@@ -191,6 +195,7 @@ class WorkerDaemon:
     """常驻调度：tick + 周期投影；clock/sleeper 注入便于离线测试。"""
 
     def __init__(self, *, loop, sync: Any,
+                 enqueue: Any | None = None,
                  tick_interval_s: int = TICK_INTERVAL_S,
                  sync_interval_s: int = SYNC_INTERVAL_S,
                  clock: Callable[[], float] | None = None,
@@ -199,6 +204,7 @@ class WorkerDaemon:
                  logger=None):
         self._loop = loop
         self._sync = sync
+        self._enqueue = enqueue
         self._tick_interval = tick_interval_s
         self._sync_interval = sync_interval_s
         self._clock = clock or time.monotonic
@@ -220,9 +226,15 @@ class WorkerDaemon:
 
     # ---- 执行面 ----
     def run_cycle(self) -> CycleReport:
-        """一轮：tick 采集 → 到期则排空 A→B 投影。异常不致命，报告后继续。"""
+        """一轮：入队消费 → tick 采集 → 到期则排空 A→B 投影。异常不致命。"""
         self._cycle_no += 1
         report = CycleReport(cycle=self._cycle_no)
+        if self._enqueue is not None:
+            try:
+                report.enqueue_summary = self._enqueue.run_once().to_dict()
+            except Exception as exc:
+                self._log.exception("enqueue failed (non-fatal)")
+                report.enqueue_summary = {"error": str(exc)[:80]}
         try:
             report.tick = _report_dict(self._loop.tick())
         except Exception as exc:
@@ -329,11 +341,16 @@ def build_components(settings: WorkerSettings) -> dict[str, Any]:
     )
     sync = SyncAgent(connect_a, connect_b)
 
+    from worker.billing.consumer import BillingOutboxConsumer
+    enqueue = BillingOutboxConsumer(connect_a, connect_b,
+                                    batch_size=settings.enqueue_batch)
+
     def reset() -> None:
         connect_a.reset()
         connect_b.reset()
 
-    return {"loop": loop, "sync": sync, "circuit": circuit,
+    return {"loop": loop, "sync": sync, "enqueue": enqueue,
+            "circuit": circuit,
             "provider": provider, "reset": reset,
             "close": lambda: (connect_a.close(), connect_b.close())}
 
@@ -350,8 +367,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="pandatrack-worker",
         description="PandaTrack worker 常驻入口：采集调度 + A→B 投影")
     parser.add_argument("mode", nargs="?", default="run",
-                        choices=("run", "once", "sync"),
-                        help="run=常驻循环(默认) once=单轮验收 sync=只排空投影")
+                        choices=("run", "once", "sync", "enqueue"),
+                        help="run=常驻循环(默认) once=单轮验收 sync=只排空投影 "
+                             "enqueue=只消费 billing_outbox 入队")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
 
@@ -363,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     components = build_components(settings)
     daemon = WorkerDaemon(
         loop=components["loop"], sync=components["sync"],
+        enqueue=components["enqueue"],
         tick_interval_s=settings.tick_interval_s,
         sync_interval_s=settings.sync_interval_s,
         reset=components["reset"])
@@ -372,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
             log.info("sync drained: %s rounds, projected=%s",
                      len(rounds),
                      sum(r.projected for r in rounds))
+        elif args.mode == "enqueue":
+            stats = components["enqueue"].run_once()
+            log.info("enqueue drained: %s", json.dumps(stats.to_dict()))
         elif args.mode == "once":
             daemon.run_cycle()
         else:

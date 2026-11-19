@@ -55,6 +55,7 @@ def test_report_custom_thresholds():
         thresholds={"dead_letter": 0, "a_outbox_unprocessed": 4,
                     "active_backlog": 500,
                     "billing_outbox_unprocessed": 100,
+                    "billing_outbox_dead": 0,
                     "oldest_projection_hours": 48.0})
     assert len(problems) == 1 and "5 条" in problems[0]
 

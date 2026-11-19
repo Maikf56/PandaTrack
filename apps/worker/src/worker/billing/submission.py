@@ -11,6 +11,8 @@ import json
 import uuid
 from dataclasses import dataclass
 
+from pandatrack_common.hashutil import payload_digest
+
 from .rules import WATERSHED_HOURS
 
 ENDPOINT = "/api/v1/submissions"
@@ -163,15 +165,15 @@ def submit(
                 (customer_id, WATERSHED_HOURS, customer_id),
             )
 
-        # 9) outbox（供 07 排队消费；aggregate_id 用 operation_id）
+        # 9) outbox（供 07 排队消费；aggregate_id 用 operation_id）。
+        # digest 统一走 hashutil.payload_digest（canonical_json），消费者
+        # （billing/consumer.py）校验同源；存量行已按同算法重算（P7）。
         payload = {
             "operation_id": operation_id,
             "customer_id": customer_id,
             "candidates": normalized_numbers,
         }
-        pf = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        ).hexdigest()
+        pf = payload_digest(payload)
         cur.execute(
             "INSERT INTO billing_outbox "
             " (aggregate_id, aggregate_type, aggregate_version, payload, payload_digest) "

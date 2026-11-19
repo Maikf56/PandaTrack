@@ -8,13 +8,15 @@
 指标（只读 SQL，不动数据）：
 - A 库：dead_letter 累计、活跃积压（pending+到期 retry_scheduled）、
   未处理 a_outbox；
-- B 库：未处理 billing_outbox、最旧投影年龄（tracking_projection）。
+- B 库：未处理 billing_outbox、billing_outbox 死信（放弃）、
+  最旧投影年龄（tracking_projection）。
 
 告警规则（build_report 纯函数，可单测）：
 - dead_letter > 0 → problem（任务终态失败需人工排查）；
 - 未处理 a_outbox > 100 → problem（sync-agent 未排空/积压）；
 - 活跃积压 > 500 → problem（采集吞吐不足或上游故障）；
 - 未处理 billing_outbox > 100 → problem；
+- billing_outbox 死信 > 0 → problem（消费放弃需人工排查）；
 - 最旧投影 > 48h → problem（投影链路停摆）。
 """
 from __future__ import annotations
@@ -31,6 +33,7 @@ THRESHOLDS = {
     "a_outbox_unprocessed": 100,
     "active_backlog": 500,
     "billing_outbox_unprocessed": 100,
+    "billing_outbox_dead": 0,
     "oldest_projection_hours": 48.0,
 }
 
@@ -45,6 +48,7 @@ def build_report(a: dict, b: dict, *,
         "active_backlog": a.get("active_backlog", 0),
         "a_outbox_unprocessed": a.get("a_outbox_unprocessed", 0),
         "billing_outbox_unprocessed": b.get("billing_outbox_unprocessed", 0),
+        "billing_outbox_dead": b.get("billing_outbox_dead", 0),
         "oldest_projection_hours": b.get("oldest_projection_hours", 0.0),
     }
     problems: list[str] = []
@@ -61,6 +65,11 @@ def build_report(a: dict, b: dict, *,
     if metrics["billing_outbox_unprocessed"] > th["billing_outbox_unprocessed"]:
         problems.append(
             f"billing_outbox 未处理 {metrics['billing_outbox_unprocessed']} 条")
+    if metrics["billing_outbox_dead"] > th.get(
+            "billing_outbox_dead", THRESHOLDS["billing_outbox_dead"]):
+        problems.append(
+            f"billing_outbox 死信 {metrics['billing_outbox_dead']} 条"
+            "（消费放弃，需人工排查 last_error）")
     if metrics["oldest_projection_hours"] > th["oldest_projection_hours"]:
         problems.append(
             f"最旧投影 {metrics['oldest_projection_hours']:.1f}h，投影链路可能停摆")
@@ -90,13 +99,17 @@ def fetch_b(url: str) -> dict:
     import psycopg
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM billing_outbox WHERE processed=false")
-        billing_outbox = cur.fetchone()[0]
+            """SELECT count(*) FILTER (WHERE processed = false),
+                      count(*) FILTER (WHERE processed = true
+                                          AND last_error IS NOT NULL)
+                 FROM billing_outbox""")
+        unprocessed, dead = cur.fetchone()
         cur.execute(
             """SELECT coalesce(max(now() - projected_at), interval '0')
                  FROM tracking_projection""")
         oldest = cur.fetchone()[0]
-    return {"billing_outbox_unprocessed": billing_outbox,
+    return {"billing_outbox_unprocessed": unprocessed,
+            "billing_outbox_dead": dead,
             "oldest_projection_hours": oldest.total_seconds() / 3600.0}
 
 
