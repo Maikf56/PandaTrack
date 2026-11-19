@@ -63,6 +63,10 @@ def customer():
                     """DELETE FROM billing_outbox WHERE aggregate_id IN
                          (SELECT operation_id FROM submission_operation
                           WHERE customer_id=%s)""",
+                    """DELETE FROM submission_item WHERE batch_id IN
+                         (SELECT batch_id FROM submission_batch
+                          WHERE operation_id IN (SELECT operation_id
+                            FROM submission_operation WHERE customer_id=%s))""",
                     """DELETE FROM submission_batch WHERE operation_id IN
                          (SELECT operation_id FROM submission_operation
                           WHERE customer_id=%s)""",
@@ -96,7 +100,11 @@ def customer():
         ctx["customer_id"] = cid
         ctx["email"] = email
         ctx["cleanup"] = _cleanup
-        return ctx
+        try:
+            yield ctx
+        finally:
+            # teardown 强制级联清理（此前 return 无 teardown，曾泄漏 ui-* 测试客户）
+            _cleanup()
     except Exception:
         _cleanup()
         raise

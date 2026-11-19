@@ -12,9 +12,9 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin-audit"])
 
 @router.get("/audit")
 def audit_log(limit: int = 100, offset: int = 0, actor_id: int | None = None,
-              action: str | None = None,
+              action: str | None = None, target: str | None = None,
               admin=Depends(require_permission(P_AUDIT_READ)),
               repo: BRepository = Depends(get_repo)):
-    rows, total = repo.audit_log(limit=limit, offset=offset,
-                                 actor_id=actor_id, action=action)
+    rows, total = repo.audit_log(limit=min(limit, 200), offset=max(offset, 0),
+                                 actor_id=actor_id, action=action, target=target)
     return {"items": rows, "total": total}

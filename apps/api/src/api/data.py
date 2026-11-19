@@ -458,6 +458,7 @@ class BRepository:
     # ---- 客户/租户/席位（只读 + 状态变更）----
     def list_customers(self, *, tenant_id: int | None = None,
                        limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+        """客户列表（管理端）：带钱包余额（LEFT JOIN，无钱包行视为 0）。"""
         with self.connect() as conn:
             with conn.cursor() as cur:
                 if tenant_id is not None:
@@ -466,22 +467,26 @@ class BRepository:
                 else:
                     cur.execute("SELECT count(*) FROM customer")
                 total = cur.fetchone()[0]
+                base_sql = (
+                    """SELECT c.customer_id, c.public_id, c.email, c.status, c.role,
+                              c.tenant_id, c.created_at,
+                              COALESCE(w.balance, 0) AS balance
+                       FROM customer c
+                       LEFT JOIN wallet w ON w.customer_id = c.customer_id""")
                 if tenant_id is not None:
                     cur.execute(
-                        """SELECT customer_id, public_id, email, status, role, tenant_id, created_at
-                           FROM customer WHERE tenant_id=%s ORDER BY created_at DESC
-                           LIMIT %s OFFSET %s""",
+                        base_sql + " WHERE c.tenant_id=%s ORDER BY c.created_at DESC"
+                        " LIMIT %s OFFSET %s",
                         (tenant_id, limit, offset))
                 else:
                     cur.execute(
-                        """SELECT customer_id, public_id, email, status, role, tenant_id, created_at
-                           FROM customer ORDER BY created_at DESC
-                           LIMIT %s OFFSET %s""",
+                        base_sql + " ORDER BY c.created_at DESC LIMIT %s OFFSET %s",
                         (limit, offset))
                 rows = cur.fetchall()
         return ([{"customer_id": r[0], "public_id": str(r[1]), "email": r[2],
                   "status": r[3], "role": r[4], "tenant_id": r[5],
-                  "created_at": r[6].isoformat() if r[6] else ""}
+                  "created_at": r[6].isoformat() if r[6] else "",
+                  "balance": r[7]}
                  for r in rows], total)
 
     def update_customer_status(self, customer_id: int, status: str) -> bool:
@@ -577,7 +582,8 @@ class BRepository:
         return ok
 
     def audit_log(self, *, limit: int = 100, offset: int = 0,
-                  actor_id: int | None = None, action: str | None = None) -> tuple[list[dict], int]:
+                  actor_id: int | None = None, action: str | None = None,
+                  target: str | None = None) -> tuple[list[dict], int]:
         with self.connect() as conn:
             with conn.cursor() as cur:
                 where = "WHERE 1=1"
@@ -588,6 +594,9 @@ class BRepository:
                 if action is not None:
                     where += " AND action=%s"
                     params.append(action)
+                if target is not None:
+                    where += " AND target=%s"
+                    params.append(target)
                 cur.execute(f"SELECT count(*) FROM audit_log {where}", params)
                 total = cur.fetchone()[0]
                 cur.execute(

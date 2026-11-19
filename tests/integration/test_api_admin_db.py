@@ -96,11 +96,12 @@ class TestAdminApi:
         assert r.status_code == 200, r.text
         assert r.json()["role"] == "super_admin"
 
-        # 3) 客户列表（应含种子客户）
+        # 3) 客户列表（应含种子客户；带钱包余额——LEFT JOIN wallet）
         r = c.get("/api/v1/admin/customers")
         assert r.status_code == 200, r.text
-        ids = [it["customer_id"] for it in r.json()["items"]]
-        assert seeded["customer_id"] in ids
+        items = {it["customer_id"]: it for it in r.json()["items"]}
+        assert seeded["customer_id"] in items
+        assert items[seeded["customer_id"]]["balance"] == 100
 
         # 4) 未登录访问 → 401
         c2 = TestClient(app)
@@ -130,12 +131,16 @@ class TestAdminApi:
         r = c.post(f"/api/v1/admin/billing/adjust?customer_id={cid}&delta=0&description=x")
         assert r.status_code == 400
 
-        # 7) 审计查询（应含 provider_toggle 与 admin_adjust_points）
+        # 7) 审计查询（应含 provider_toggle 与 admin_adjust_points；target 过滤）
         r = c.get("/api/v1/admin/audit")
         assert r.status_code == 200, r.text
         actions = {it["action"] for it in r.json()["items"]}
         assert "provider_toggle" in actions
         assert "admin_adjust_points" in actions
+        r = c.get(f"/api/v1/admin/audit?target={cid}")
+        assert r.status_code == 200, r.text
+        assert r.json()["items"]
+        assert all(it["target"] == str(cid) for it in r.json()["items"])
 
     def test_status_dict_public(self, seeded):
         """状态字典是公开端点，无需鉴权。"""

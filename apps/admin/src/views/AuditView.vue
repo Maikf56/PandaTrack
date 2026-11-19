@@ -2,12 +2,19 @@
 import { ref, onMounted } from 'vue'
 import { api, type AuditRow } from '../api/client'
 
-// 审计日志（03 §3.4）：全部高风险操作的查询视图；支持按动作过滤。
+// 审计日志（03 §3.4）：全部高风险操作的查询视图；按动作/对象过滤，详情可展开。
 const items = ref<AuditRow[]>([])
 const total = ref(0)
 const loading = ref(true)
 const error = ref('')
 const actionFilter = ref('')
+const expanded = ref<Set<number>>(new Set())
+
+const ACTION_ZH: Record<string, string> = {
+  customer_status_change: '客户状态变更',
+  provider_toggle: 'Provider 启停',
+  points_adjust: '积分调整',
+}
 
 onMounted(reload)
 
@@ -28,9 +35,16 @@ async function reload() {
   }
 }
 
+function toggleExpand(id: number) {
+  const next = new Set(expanded.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expanded.value = next
+}
+
 function fmtDetail(d: Record<string, unknown> | null): string {
-  if (!d) return '—'
-  return JSON.stringify(d)
+  if (!d || !Object.keys(d).length) return '—'
+  return Object.entries(d).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n')
 }
 </script>
 
@@ -69,9 +83,19 @@ function fmtDetail(d: Record<string, unknown> | null): string {
         <tr v-for="row in items" :key="row.audit_id">
           <td>{{ new Date(row.created_at).toLocaleString() }}</td>
           <td class="mono">{{ row.actor_role ?? '' }}/{{ row.actor_id ?? '—' }}</td>
-          <td><span class="badge">{{ row.action }}</span></td>
+          <td><span class="badge">{{ ACTION_ZH[row.action] ?? row.action }}</span></td>
           <td class="mono">{{ row.target ?? '—' }}</td>
-          <td class="mono detail-cell">{{ fmtDetail(row.detail) }}</td>
+          <td>
+            <button
+              v-if="row.detail && Object.keys(row.detail).length"
+              class="btn ghost sm"
+              @click="toggleExpand(row.audit_id)"
+            >
+              {{ expanded.has(row.audit_id) ? '收起' : '展开' }}
+            </button>
+            <span v-else class="hint">—</span>
+            <pre v-if="expanded.has(row.audit_id)" class="detail-pre">{{ fmtDetail(row.detail) }}</pre>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -80,5 +104,10 @@ function fmtDetail(d: Record<string, unknown> | null): string {
 </template>
 
 <style scoped>
-.detail-cell { max-width: 320px; white-space: normal; word-break: break-all; font-size: 12px; color: var(--fg-soft); }
+.detail-pre {
+  margin: 8px 0 0; padding: 10px 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius-ctl);
+  white-space: pre-wrap; word-break: break-all; font-size: 12px;
+  font-family: var(--mono); max-width: 320px;
+}
 </style>

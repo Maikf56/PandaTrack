@@ -8,15 +8,17 @@ const route = useRoute()
 const router = useRouter()
 const isLogin = computed(() => route.name === 'login')
 
-// 导航按角色过滤（03 §2 RBAC；后端为权威校验，这里只控可见性）
+// 导航按角色过滤（03 §2 RBAC；后端为权威校验，这里只控可见性）。
+// 总览（值班巡查首屏）对所有角色开放，内容块按权限逐块渲染。
 const navItems = [
-  { to: '/', label: '客户管理', perm: 'customers:read' },
+  { to: '/', label: '总览', perm: '' },
+  { to: '/customers', label: '客户管理', perm: 'customers:read' },
   { to: '/billing', label: '账务操作', perm: 'billing:read' },
   { to: '/providers', label: 'Provider 与任务', perm: 'providers:read' },
   { to: '/audit', label: '审计日志', perm: 'audit:read' },
 ]
 const visibleNav = computed(() =>
-  navItems.filter((it) => can(it.perm)),
+  navItems.filter((it) => !it.perm || can(it.perm)),
 )
 const roleLabel = computed(() =>
   ROLE_LABELS[adminSession.me?.role ?? ''] ?? adminSession.me?.role ?? '',

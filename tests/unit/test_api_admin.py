@@ -134,4 +134,5 @@ class TestAdminAudit:
         r = c.get("/api/v1/admin/audit")
         assert r.status_code == 200
         repo.audit_log.assert_called_once_with(limit=100, offset=0,
-                                                actor_id=None, action=None)
+                                                actor_id=None, action=None,
+                                                target=None)
