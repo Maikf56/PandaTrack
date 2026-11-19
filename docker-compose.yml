@@ -1,0 +1,40 @@
+# 本地/验收区编排（00 §202 固化）。生产不由 compose 部署，见 08。
+# 服务器已直装 PG16/Redis7（apt），本文件用于容器化验收与 CI。
+services:
+  postgres-a:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pandatrack_a
+      POSTGRES_USER: pandatrack
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD}
+    ports: ["5433:5432"]
+    volumes: ["pgdata_a:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pandatrack -d pandatrack_a"]
+      interval: 5s
+      retries: 10
+
+  postgres-b:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pandatrack_b
+      POSTGRES_USER: pandatrack
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD}
+    ports: ["5434:5432"]
+    volumes: ["pgdata_b:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pandatrack -d pandatrack_b"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata_a:
+  pgdata_b:

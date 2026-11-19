@@ -1,0 +1,13 @@
+[project]
+name = "pandatrack-common"
+version = "0.1.0"
+description = "PandaTrack 共享纯函数：错误码字典、状态映射、哈希"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,29 @@
+[project]
+name = "pandatrack"
+version = "0.1.0"
+description = "USPS 单号查询系统 —— 多租户物流跟踪工作台（monorepo 根）"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.10,<3.0",
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "psycopg[binary]>=3.2,<4.0",
+    "redis>=5.2,<7.0",
+    "httpx>=0.28,<1.0",
+    "structlog>=24.4,<26.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3,<9.0",
+    "pytest-asyncio>=0.24,<2.0",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=short"
+asyncio_mode = "auto"

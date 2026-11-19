@@ -1,0 +1,15 @@
+[project]
+name = "pandatrack-contracts"
+version = "0.1.0"
+description = "PandaTrack API/SSE 权威契约（模块 09；替代失效的 05_技术文档/API-CONTRACT.md）"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.10,<3.0",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / 前端
+node_modules/
+apps/*/dist/
+*.tsbuildinfo
+
+# 秘密与环境（仓库内只允许 .env.example）
+.env
+.env.*
+!.env.example
+*.pem
+!docs/**/*.pem.example
+
+# 采集证据与运行时数据（绝不入库）
+evidence/
+data/
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
