@@ -6,6 +6,7 @@ BFF 只持有 B 库凭据，不碰 A 库。对外 ID 一律 UUID（public_id）�
 from __future__ import annotations
 
 import hashlib
+import json
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
@@ -22,14 +23,27 @@ def token_hash(token: str) -> str:
 
 
 class BRepository:
-    """B 库访问；dsn 由环境变量注入，本类不读 A 库。"""
+    """B 库访问；dsn 由环境变量注入。
 
-    def __init__(self, dsn: str):
+    管理端观察类方法（provider/fetch_job）需要 A 库只读访问，
+    通过可选 dsn_a 短生命周期打开，客户路由绝不触碰 A 库。
+    """
+
+    def __init__(self, dsn: str, dsn_a: str | None = None):
         self.dsn = dsn
+        self.dsn_a = dsn_a
 
     @contextmanager
     def connect(self) -> Iterator[psycopg.Connection]:
         with psycopg.connect(self.dsn) as conn:
+            yield conn
+
+    @contextmanager
+    def connect_a(self) -> Iterator[psycopg.Connection]:
+        """A 库短连接（仅管理端观察/操作使用）。"""
+        if not self.dsn_a:
+            raise RuntimeError("A 库 DSN 未配置（DATABASE_A_URL）")
+        with psycopg.connect(self.dsn_a) as conn:
             yield conn
 
     # ---- 鉴权 ----
@@ -279,3 +293,196 @@ class BRepository:
                     (customer_id, hours),
                 )
                 return {r[0] for r in cur.fetchall()}
+
+    # ========== 管理端（03）：admin 鉴权、客户/账务/Provider/审计 ==========
+
+    def authenticate_admin(self, username: str, password: str) -> dict | None:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT admin_id, public_id, username, password_hash, role, status
+                       FROM admin_user WHERE username=%s""",
+                    (username,),
+                )
+                row = cur.fetchone()
+        if row is None or not self._verify_password(password, row[3]):
+            return None
+        if row[5] != "active":
+            return None
+        return {"admin_id": row[0], "public_id": str(row[1]),
+                "username": row[2], "role": row[4]}
+
+    def create_admin_session(self, subject: dict, token: str, *, ttl_seconds: int = 1800) -> None:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO session (customer_id, admin_id, token_hash, expires_at)
+                       VALUES (NULL, %s, %s, %s)""",
+                    (subject["admin_id"], token_hash(token),
+                     datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)),
+                )
+                conn.commit()
+
+    def resolve_admin_session(self, token: str) -> dict | None:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT s.admin_id, a.public_id, a.username, a.role, a.status
+                       FROM session s
+                       JOIN admin_user a ON a.admin_id=s.admin_id
+                       WHERE s.token_hash=%s AND s.revoked=false
+                         AND s.expires_at>now() AND s.customer_id IS NULL""",
+                    (token_hash(token),),
+                )
+                row = cur.fetchone()
+        if row is None or row[4] != "active":
+            return None
+        return {"admin_id": row[0], "public_id": str(row[1]),
+                "username": row[2], "role": row[3]}
+
+    # ---- 客户/租户/席位（只读 + 状态变更）----
+    def list_customers(self, *, tenant_id: int | None = None,
+                       limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                if tenant_id is not None:
+                    cur.execute(
+                        "SELECT count(*) FROM customer WHERE tenant_id=%s", (tenant_id,))
+                else:
+                    cur.execute("SELECT count(*) FROM customer")
+                total = cur.fetchone()[0]
+                if tenant_id is not None:
+                    cur.execute(
+                        """SELECT customer_id, public_id, email, status, role, tenant_id, created_at
+                           FROM customer WHERE tenant_id=%s ORDER BY created_at DESC
+                           LIMIT %s OFFSET %s""",
+                        (tenant_id, limit, offset))
+                else:
+                    cur.execute(
+                        """SELECT customer_id, public_id, email, status, role, tenant_id, created_at
+                           FROM customer ORDER BY created_at DESC
+                           LIMIT %s OFFSET %s""",
+                        (limit, offset))
+                rows = cur.fetchall()
+        return ([{"customer_id": r[0], "public_id": str(r[1]), "email": r[2],
+                  "status": r[3], "role": r[4], "tenant_id": r[5],
+                  "created_at": r[6].isoformat() if r[6] else ""}
+                 for r in rows], total)
+
+    def update_customer_status(self, customer_id: int, status: str) -> bool:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE customer SET status=%s, updated_at=now() WHERE customer_id=%s",
+                    (status, customer_id))
+                return cur.rowcount > 0
+
+    # ---- Provider 健康/任务（只读）----
+    def provider_health(self) -> list[dict]:
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT provider_code, enabled, circuit_open, consecutive_failures,
+                              cooldown_until, updated_at
+                       FROM provider_health ORDER BY updated_at DESC""")
+                rows = cur.fetchall()
+        return [{"provider_code": r[0], "enabled": r[1], "circuit_open": r[2],
+                 "consecutive_failures": r[3], "cooldown_until": r[4].isoformat() if r[4] else None,
+                 "updated_at": r[5].isoformat() if r[5] else None} for r in rows]
+
+    def queue_snapshot(self) -> dict:
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT state, count(*) FROM fetch_job GROUP BY state ORDER BY state""")
+                rows = cur.fetchall()
+                cur.execute("SELECT count(*) FROM fetch_job WHERE state='dead_letter'")
+                dead = cur.fetchone()[0]
+        return {"by_state": {r[0]: r[1] for r in rows}, "dead_letter": dead}
+
+    # ---- 积分调整（追加 PointsLedger，不直接 patch 钱包绝对值）----
+    def admin_adjust_points(self, customer_id: int, delta: int,
+                            description: str, *, actor_id: int, actor_role: str) -> dict:
+        """admin 积分调整：追加 PointsLedger + 同步 wallet balance（相对值）。"""
+        if delta == 0:
+            raise ValueError("delta 不能为 0")
+        with self.connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO points_ledger
+                           (customer_id, ledger_type, points_change, description)
+                           VALUES (%s, 'admin_adjust', %s, %s)
+                           RETURNING ledger_id""",
+                        (customer_id, delta, description))
+                    ledger_id = cur.fetchone()[0]
+                    cur.execute(
+                        """UPDATE wallet SET balance=balance+%s, updated_at=now()
+                           WHERE customer_id=%s RETURNING balance""",
+                        (delta, customer_id))
+                    row = cur.fetchone()
+                    if row is None:
+                        raise ValueError("wallet not found")
+                    balance = row[0]
+                    cur.execute(
+                        """INSERT INTO audit_log (actor_id, actor_role, action, target, detail)
+                           VALUES (%s, %s, 'admin_adjust_points', %s, %s)""",
+                        (actor_id, actor_role, str(customer_id),
+                         json.dumps({"delta": delta, "ledger_id": str(ledger_id),
+                                     "new_balance": balance})))
+                conn.commit()
+                return {"ledger_id": str(ledger_id), "new_balance": balance}
+            except Exception:
+                conn.rollback()
+                raise
+
+    # ---- 审计日志 ----
+    def write_audit(self, *, actor_id: int, actor_role: str,
+                    action: str, target: str, detail: dict | None = None) -> None:
+        """写入审计日志（管理端所有写操作强制调用，03 §3.1/§3.4）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO audit_log (actor_id, actor_role, action, target, detail)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (actor_id, actor_role, action, target,
+                     json.dumps(detail) if detail is not None else None))
+            conn.commit()
+
+    def toggle_provider(self, provider_code: str, enabled: bool) -> bool:
+        """Provider 启停（A 库 provider_health）；返回是否存在该 Provider。"""
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE provider_health SET enabled=%s, updated_at=now()
+                       WHERE provider_code=%s RETURNING provider_code""",
+                    (enabled, provider_code))
+                ok = cur.fetchone() is not None
+            conn.commit()
+        return ok
+
+    def audit_log(self, *, limit: int = 100, offset: int = 0,
+                  actor_id: int | None = None, action: str | None = None) -> tuple[list[dict], int]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                where = "WHERE 1=1"
+                params: list = []
+                if actor_id is not None:
+                    where += " AND actor_id=%s"
+                    params.append(actor_id)
+                if action is not None:
+                    where += " AND action=%s"
+                    params.append(action)
+                cur.execute(f"SELECT count(*) FROM audit_log {where}", params)
+                total = cur.fetchone()[0]
+                cur.execute(
+                    f"""SELECT audit_id, actor_id, actor_role, action, target, detail, created_at
+                        FROM audit_log {where}
+                        ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+                    (*params, limit, offset),
+                )
+                rows = cur.fetchall()
+        return ([{"audit_id": r[0], "actor_id": r[1], "actor_role": r[2],
+                  "action": r[3], "target": r[4], "detail": r[5],
+                  "created_at": r[6].isoformat() if r[6] else ""}
+                 for r in rows], total)

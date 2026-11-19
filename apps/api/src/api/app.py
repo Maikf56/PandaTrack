@@ -20,11 +20,13 @@ from api.errors import ApiProblem, api_problem_handler
 from api.routes import auth, billing, events, meta, submissions, tracking
 
 
-def create_app(dsn: str | None = None) -> FastAPI:
+def create_app(dsn: str | None = None, dsn_a: str | None = None) -> FastAPI:
     app = FastAPI(title="PandaTrack BFF", version="0.1.0")
 
     dsn = dsn or os.environ.get("DATABASE_B_URL", "")
-    app.state.repo = BRepository(dsn) if dsn else None
+    dsn_a = dsn_a or os.environ.get("DATABASE_A_URL", "")
+    app.state.repo = (BRepository(dsn, dsn_a=dsn_a or None)
+                      if dsn else None)
 
     app.add_exception_handler(ApiProblem, api_problem_handler)
 
@@ -46,6 +48,10 @@ def create_app(dsn: str | None = None) -> FastAPI:
         return resp
 
     for r in (auth, submissions, tracking, billing, events, meta):
+        app.include_router(r.router)
+    # 管理端路由（独立域名 + 独立鉴权，路径隔离 /api/v1/admin）
+    from api.routes import admin_auth, admin_customers, admin_providers, admin_billing, admin_audit  # noqa: F401
+    for r in (admin_auth, admin_customers, admin_providers, admin_billing, admin_audit):
         app.include_router(r.router)
 
     @app.get("/healthz")
