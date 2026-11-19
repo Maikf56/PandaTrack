@@ -22,6 +22,23 @@ from pandatrack_common.status import TERMINAL_STATUSES
 ACTIVE_WINDOW_DAYS = 7
 DEFAULT_DAILY_REFRESH_CAP = 100000
 
+# 分层刷新节奏（吸收《爬虫方案分析》§4，07 保鲜的自然延伸）：
+# 妥投前高价值窗口（out_for_delivery）收窄到 30 分钟；运输中 4 小时；
+# 其余非终态走默认 24h。终态不刷新（reuse_terminal 已覆盖）。
+REFRESH_INTERVALS: dict[str, timedelta] = {
+    "out_for_delivery": timedelta(minutes=30),
+    "in_transit": timedelta(hours=4),
+}
+DEFAULT_REFRESH_INTERVAL = timedelta(hours=24)
+
+
+def next_sync_for(status_key: str, last_success_at: datetime) -> datetime | None:
+    """按当前状态计算 next_sync_at；终态返回 None（永不刷新）。"""
+    if status_key in TERMINAL_STATUSES:
+        return None
+    interval = REFRESH_INTERVALS.get(status_key, DEFAULT_REFRESH_INTERVAL)
+    return last_success_at + interval
+
 
 @dataclass(slots=True)
 class Fact:

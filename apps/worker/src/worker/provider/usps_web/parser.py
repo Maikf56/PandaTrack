@@ -121,6 +121,37 @@ def map_status(detail: str) -> tuple[str, str]:
     return (hit[0], std.label_zh if std else OTHER.label_zh)
 
 
+class UnmappedStatusStats:
+    """未映射事件文本 TopN 统计（吸收《爬虫方案分析》改进项）。
+
+    不猜测：未登记文本仍归 other（00 定案权威原则），但留痕统计——
+    USPA/USPS 新增事件文案达到 TopN 阈值后人工评估补映射，避免
+    「other 大海捞针」也避免「宁可粗糙乱归 in_transit」。
+    线程安全（解析可能进线程池）。
+    """
+
+    def __init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+        self._counts: dict[str, int] = {}
+
+    def record(self, detail: str) -> None:
+        text = detail.strip()
+        if not text:
+            return
+        with self._lock:
+            self._counts[text] = self._counts.get(text, 0) + 1
+
+    def top(self, n: int = 10) -> list[tuple[str, int]]:
+        """出现最多的未映射文本（降序）。"""
+        with self._lock:
+            return sorted(self._counts.items(), key=lambda kv: -kv[1])[:n]
+
+    def total(self) -> int:
+        with self._lock:
+            return sum(self._counts.values())
+
+
 def _split_product_summaries(html: str) -> list[tuple[str, str]]:
     """按 product_summary 块切分，返回 [(tracking_number, block_html)]。
 
@@ -141,8 +172,8 @@ def _split_product_summaries(html: str) -> list[tuple[str, str]]:
     return blocks
 
 
-def _parse_events(block: str) -> list[ParsedEvent]:
-    """从单号块内提取 tb-step 事件列表。"""
+def _parse_events(block: str, stats: "UnmappedStatusStats | None" = None) -> list[ParsedEvent]:
+    """从单号块内提取 tb-step 事件列表。stats 传入时记录未映射文本。"""
     events: list[ParsedEvent] = []
     for chunk in block.split('class="tb-step')[1:]:
         current = chunk.startswith(" current-step")
@@ -155,6 +186,8 @@ def _parse_events(block: str) -> list[ParsedEvent]:
         location = re.sub(r"\s+", " ", lm.group(1)).strip() if lm else ""
         date_raw = re.sub(r"\s+", " ", dtm.group(1)).strip() if dtm else ""
         key, zh = map_status(detail)
+        if key == OTHER.key and stats is not None:
+            stats.record(detail)
         events.append(ParsedEvent(
             detail=detail, location=location, date_raw=date_raw,
             date=parse_date(date_raw), is_current=current,
@@ -163,8 +196,12 @@ def _parse_events(block: str) -> list[ParsedEvent]:
     return events
 
 
-def parse_html(html: str) -> list[ParsedTracking]:
-    """解析批量结果页，返回按块内显式单号绑定的结果列表。"""
+def parse_html(html: str,
+               stats: "UnmappedStatusStats | None" = None) -> list[ParsedTracking]:
+    """解析批量结果页，返回按块内显式单号绑定的结果列表。
+
+    stats 传入时同步记录未映射事件文本（TopN 周报数据源）。
+    """
     results: list[ParsedTracking] = []
     for tno, block in _split_product_summaries(html):
         sm = re.search(
@@ -181,7 +218,7 @@ def parse_html(html: str) -> list[ParsedTracking]:
         else:
             summary = re.sub(r"\s+", " ", sm.group(1)).strip()
         bm = re.search(r'update-banner-wrapper banner-(\d+)', block)
-        events = _parse_events(block)
+        events = _parse_events(block, stats)
         current = next((e for e in events if e.is_current), None)
         if current is None and events:
             current = events[0]

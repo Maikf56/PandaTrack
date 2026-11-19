@@ -23,7 +23,21 @@ from worker.provider.contracts import tracking_ref
 from worker.provider.errors import ProviderError
 
 USPS_HOME = "https://www.usps.com/"
-TRACK_URL = "https://tools.usps.com/go/TrackConfirmAction?tLabels={numbers}"
+# 查询参数名可配置（02 定稿实测 tLabels 可用；《爬虫方案分析》§2.3 称必须
+# qtc_tLabels1，双参数对照实验因 ClawBrowser 流量额度暂缓）。恢复实测后
+# 若裁定 qtc_tLabels1，改环境变量 PT_USPS_TRACK_PARAM 即可，无需改代码。
+DEFAULT_TRACK_PARAM = "tLabels"
+
+
+def _track_param() -> str:
+    import os
+    return os.environ.get("PT_USPS_TRACK_PARAM", DEFAULT_TRACK_PARAM).strip() or \
+        DEFAULT_TRACK_PARAM
+
+
+def track_url(numbers: list[str]) -> str:
+    return ("https://tools.usps.com/go/TrackConfirmAction?"
+            f"{_track_param()}={','.join(numbers)}")
 
 # 州级出口优先顺序（02 §123 实测通过率：texas/ohio 约 2/5，加州/纽约/佛州 0/12）。
 DEFAULT_STATES = (
@@ -171,7 +185,7 @@ class ClawExecutor:
 
     # ---- 跟踪页导航与抓取 ----
     def _open_tracking(self, numbers: list[str]) -> None:
-        url = TRACK_URL.format(numbers=",".join(numbers))
+        url = track_url(numbers)
         self._claw("open", url, timeout=90)
         self._sleep(self.cfg.page_wait_s)
 
