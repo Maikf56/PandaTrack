@@ -60,8 +60,9 @@ class BRepository:
                     (email,),
                 )
                 row = cur.fetchone()
+        # 返回 None 而非抛错：调用方（登录路由）需在 401 前记录防爆破失败。
         if row is None or not self._verify_password(password, row[2]):
-            raise ApiProblem(codes.UNAUTHORIZED)
+            return None
         if row[3] != "active":
             raise ApiProblem(codes.FORBIDDEN)
         return {"customer_id": row[0], "public_id": str(row[1]),

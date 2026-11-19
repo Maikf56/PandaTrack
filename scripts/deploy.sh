@@ -57,9 +57,11 @@ for unit in pandatrack-api.service pandatrack-worker.service pandatrack-health.s
   sudo cp "infra/systemd/$unit" /etc/systemd/system/
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now pandatrack-api pandatrack-worker pandatrack-health.timer
+# 注意：enable --now 对已运行服务不生效（不重启）；必须显式 restart 保证新代码加载
+sudo systemctl enable pandatrack-api pandatrack-worker
 sudo systemctl restart pandatrack-api pandatrack-worker
-sudo systemctl restart pandatrack-health.timer 2>/dev/null || true
+sudo systemctl enable --now pandatrack-health.timer
+sudo systemctl restart pandatrack-health.service
 
 # ---------- 6. nginx ----------
 log "6/7 nginx 站点"

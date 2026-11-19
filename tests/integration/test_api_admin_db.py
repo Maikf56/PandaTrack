@@ -42,7 +42,7 @@ def seeded():
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO admin_user (username, password_hash, role, status)
-                   VALUES (%s,%s,'admin','active') RETURNING admin_id""",
+                   VALUES (%s,%s,'super_admin','active') RETURNING admin_id""",
                 (ADMIN_NAME, BRepository.hash_password(ADMIN_PW)),
             )
             aid = cur.fetchone()[0]
@@ -94,7 +94,7 @@ class TestAdminApi:
         r = c.post("/api/v1/admin/auth/login",
                    json={"username": ADMIN_NAME, "password": ADMIN_PW})
         assert r.status_code == 200, r.text
-        assert r.json()["role"] == "admin"
+        assert r.json()["role"] == "super_admin"
 
         # 3) 客户列表（应含种子客户）
         r = c.get("/api/v1/admin/customers")
