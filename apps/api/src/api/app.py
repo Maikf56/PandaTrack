@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -17,16 +18,43 @@ from pandatrack_common import codes
 
 from api.data import BRepository
 from api.errors import ApiProblem, api_problem_handler
+from api.notify import DEFAULT_CHANNEL, NotifierHub, PgListener
 from api.routes import auth, billing, events, meta, submissions, tracking
 
 
-def create_app(dsn: str | None = None, dsn_a: str | None = None) -> FastAPI:
-    app = FastAPI(title="PandaTrack BFF", version="0.1.0")
+def _env_bool(name: str, default: str = "true") -> bool:
+    return (os.environ.get(name, default) or default).strip().lower() in (
+        "1", "true", "yes", "on")
 
+
+def create_app(dsn: str | None = None, dsn_a: str | None = None) -> FastAPI:
     dsn = dsn or os.environ.get("DATABASE_B_URL", "")
     dsn_a = dsn_a or os.environ.get("DATABASE_A_URL", "")
+
+    # SSE 推送：B 库 LISTEN/NOTIFY（b/0003 触发器）；未启用时路由降级轮询。
+    event_hub = NotifierHub()
+    listener: PgListener | None = None
+    if dsn and _env_bool("PT_EVENT_LISTEN"):
+        listener = PgListener(
+            dsn, event_hub,
+            channel=os.environ.get("PT_EVENT_CHANNEL", DEFAULT_CHANNEL))
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        import asyncio
+        event_hub.bind_loop(asyncio.get_running_loop())
+        if listener is not None:
+            listener.start()
+        yield
+        if listener is not None:
+            listener.stop()
+
+    app = FastAPI(title="PandaTrack BFF", version="0.1.0",
+                  lifespan=lifespan)
+
     app.state.repo = (BRepository(dsn, dsn_a=dsn_a or None)
                       if dsn else None)
+    app.state.event_hub = event_hub
 
     app.add_exception_handler(ApiProblem, api_problem_handler)
 
