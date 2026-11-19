@@ -48,7 +48,17 @@ def throttle_keys(ip: str, identifier: str) -> list[str]:
 
 
 def client_ip(request) -> str:
-    """取客户端 IP：nginx 前置下信任 X-Forwarded-For 首跳，兜底直连地址。"""
+    """取客户端 IP（nginx/CF 前置链路）：
+
+    1. CF-Connecting-IP：Cloudflare 强制覆盖的原始客户端 IP，不可由客户端伪造
+       （源站只收 CF 回源流量时可信）；
+    2. X-Forwarded-For 首跳：nginx $proxy_add_x_forwarded_for 下为客户端自报值，
+       可伪造——仅作兜底（伪造可绕过 ip|账号 单源键，*|账号 跨源键仍兜底防爆破）；
+    3. 直连地址。
+    """
+    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+    if cf_ip:
+        return cf_ip[:64]
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         first = xff.split(",")[0].strip()

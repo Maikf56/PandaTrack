@@ -62,7 +62,7 @@ def list_trackings(lang: str | None = None,
                    repo: BRepository = Depends(get_repo)):
     rows = repo.list_trackings(subject.customer_id)
     if lang:
-        rows = [_with_lang(r, lang, repo) for r in rows]
+        rows = _translate_rows(rows, lang, repo)
     return [_to_view(r) for r in rows]
 
 
@@ -74,7 +74,7 @@ def get_tracking(tracking_uuid: str, lang: str | None = None,
     if row is None:
         raise ApiProblem(codes.NOT_FOUND)
     if lang:
-        row = _with_lang(row, lang, repo)
+        row = _translate_rows([row], lang, repo)[0]
     return _to_view(row)
 
 
@@ -102,31 +102,40 @@ def check_updates(payload: CheckUpdatesRequest,
     return out
 
 
-def _with_lang(row: dict, lang: str, repo: BRepository) -> dict:
+def _translate_rows(rows: list[dict], lang: str, repo: BRepository) -> list[dict]:
     """按 lang 机翻事件描述（增值降级：无 key/失败保持原文，原样返回）。
 
     仅翻 description 自由文本；label_zh/status_key 走静态字典不过机翻。
+    整页文本合并为一次 translate_texts 调用（一次缓存 SELECT + 至多一次
+    Google 批量请求），避免逐行查询的 N+1。
     """
     lang = (lang or "").strip().lower()
     if lang not in SUPPORTED_LANGS:
-        return row
-    events = [e for e in (row.get("events") or []) if isinstance(e, dict)]
-    texts = [(e.get("description") or e.get("description_zh") or "")
-             for e in events]
+        return rows
+    texts: list[str] = []
+    for row in rows:
+        for e in (row.get("events") or []):
+            if isinstance(e, dict):
+                texts.append(e.get("description") or e.get("description_zh") or "")
     if not any(texts):
-        return row
+        return rows
     mapping = translate_texts(repo=repo, lang=lang, texts=texts)
     if not mapping:
-        return row
-    translated_rows = []
-    for e, text in zip(events, texts):
-        e = dict(e)
-        if text and text in mapping:
-            e["description"] = mapping[text]
-        translated_rows.append(e)
-    row = dict(row)
-    row["events"] = translated_rows
-    return row
+        return rows
+    out: list[dict] = []
+    for row in rows:
+        row = dict(row)
+        events = []
+        for e in (row.get("events") or []):
+            if isinstance(e, dict):
+                e = dict(e)
+                text = e.get("description") or e.get("description_zh") or ""
+                if text and text in mapping:
+                    e["description"] = mapping[text]
+            events.append(e)
+        row["events"] = events
+        out.append(row)
+    return out
 
 
 def _to_view(row: dict) -> TrackingView:

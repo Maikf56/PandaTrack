@@ -1,12 +1,11 @@
 """管理端账务路由：/api/v1/admin/billing/*（03 §3.2，积分调整/冲正/审计）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from api.authz import P_BILLING_READ, P_BILLING_WRITE, require_permission
 from api.data import BRepository
 from api.deps import get_repo
-from api.routes.admin_auth import get_admin_subject
 from api.errors import ApiProblem
 from pandatrack_common import codes
 

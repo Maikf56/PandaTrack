@@ -44,6 +44,13 @@ def test_client_ip_prefers_forwarded_for():
     assert client_ip(req) == "198.51.100.7"
 
 
+def test_client_ip_prefers_cf_connecting_ip():
+    """Cloudflare 场景：CF-Connecting-IP 不可伪造，优先于可伪造的 XFF 首跳。"""
+    req = _FakeRequest({"cf-connecting-ip": "198.51.100.7",
+                        "x-forwarded-for": "6.6.6.6, 10.0.0.1"})
+    assert client_ip(req) == "198.51.100.7"
+
+
 def test_client_ip_fallback_direct():
     assert client_ip(_FakeRequest({}, host="192.0.2.5")) == "192.0.2.5"
     assert client_ip(_FakeRequest({}, host=None)) == "unknown"

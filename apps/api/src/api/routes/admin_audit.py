@@ -1,7 +1,7 @@
 """管理端审计路由：/api/v1/admin/audit（03 §3.4，操作审计查询）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from api.authz import P_AUDIT_READ, require_permission
 from api.data import BRepository

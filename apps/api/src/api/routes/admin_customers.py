@@ -5,7 +5,7 @@ customers:delete（注销，仅 super_admin）。
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from api.authz import (P_CUSTOMERS_DELETE, P_CUSTOMERS_READ, P_CUSTOMERS_WRITE,
                        require_permission, role_can)

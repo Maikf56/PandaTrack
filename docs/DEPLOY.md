@@ -34,7 +34,7 @@ sudo -u postgres createdb -O pandatrack pandatrack_b
 
 ```bash
 git clone <REPO_URL> ~/pandatrack && cd ~/pandatrack
-python3.12 -m venv .venv && .venv/bin/pip install -e .
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 创建 `.env`（必填键，`deploy.sh` 会校验）：
@@ -46,6 +46,9 @@ PT_DB_A_URL=postgresql+psycopg://pandatrack:<PW>@127.0.0.1:5432/pandatrack_a
 PT_DB_B_URL=postgresql+psycopg://pandatrack:<PW>@127.0.0.1:5432/pandatrack_b
 # 可选：防测试单号触发真实采集（逗号分隔）
 PT_ENQUEUE_SKIP_NUMBERS=
+# 可选：轨迹翻译（Google Cloud Translation v2）。留空 = 轨迹返回原文（优雅降级，
+# 不影响查询主链路）。启用：Google Cloud 控制台启用 Translation API，创建 API Key 填入。
+PT_TRANSLATE_API_KEY=
 ```
 
 ## 4. DNS 与证书
