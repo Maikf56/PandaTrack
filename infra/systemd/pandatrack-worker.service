@@ -29,7 +29,7 @@ WorkingDirectory=/home/ubuntu/pandatrack
 Environment=PYTHONPATH=/home/ubuntu/pandatrack/apps/worker/src:/home/ubuntu/pandatrack/packages/common/src:/home/ubuntu/pandatrack/packages/contracts/src
 Environment=PATH=/home/ubuntu/tools/clawctl-linux-amd64:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/home/ubuntu/pandatrack/.env
-ExecStart=/usr/bin/python3 -m worker.runtime.daemon run
+ExecStart=/home/ubuntu/pandatrack/.venv/bin/python -m worker.runtime.daemon run
 Restart=on-failure
 RestartSec=15
 # 崩溃即重启；单轮内已按租约/事务幂等设计，重启不丢单。
