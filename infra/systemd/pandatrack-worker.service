@@ -1,0 +1,40 @@
+# PandaTrack worker 常驻服务（模块 07 Worker 驱动 / 05 数据链路）。
+#
+# 安装（服务器，ubuntu 用户）：
+#   sudo cp infra/systemd/pandatrack-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now pandatrack-worker
+# 查看运行报告（每轮 JSON 行）：
+#   journalctl -u pandatrack-worker -f
+#
+# 前置条件：
+# - 仓库位于 /home/ubuntu/pandatrack（PYTHONPATH 三段 src 布局）；
+# - 凭据在 ~/pandatrack/.env（PT_DB_A_URL / PT_DB_B_URL 等，仓库外）；
+# - relay 出口服务 pandatrack-relay 已由 relay_deploy.sh 部署；
+# - clawctl 在 PATH 或下方 Environment= 指定的目录中。
+# - sudoers 需允许 ubuntu 免密 `systemctl restart pandatrack-relay`
+#   （出口轮换用，与 claw_rotate.sh 同口径）：
+#   ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart pandatrack-relay
+
+[Unit]
+Description=PandaTrack worker (USPS 采集调度 + A→B 投影)
+After=network-online.target postgresql.service pandatrack-relay.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/pandatrack
+Environment=PYTHONPATH=/home/ubuntu/pandatrack/apps/worker/src:/home/ubuntu/pandatrack/packages/common/src:/home/ubuntu/pandatrack/packages/contracts/src
+Environment=PATH=/home/ubuntu/tools/clawctl-linux-amd64:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/home/ubuntu/pandatrack/.env
+ExecStart=/usr/bin/python3 -m worker.runtime.daemon run
+Restart=on-failure
+RestartSec=15
+# 崩溃即重启；单轮内已按租约/事务幂等设计，重启不丢单。
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
