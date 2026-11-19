@@ -1,10 +1,17 @@
-"""提交路由：POST /api/v1/submissions（06/09，一次完成清洗+计费+受理）。"""
+"""提交路由：POST /api/v1/submissions（06/09，一次完成清洗+计费+受理）。
+
+另含 POST /api/v1/submissions/estimate（04 §5.4 实时解析面板）：幂等只读、
+不入账、不构成报价；分类与余额均来自服务端，前端不自算（09 §5.2.1）。
+"""
 from __future__ import annotations
+
+import math
 
 from fastapi import APIRouter, Depends
 
 from contracts.submission import (
-    SubmissionAccepted, SubmissionCreate, SubmissionInvalidItem,
+    SubmissionAccepted, SubmissionCreate, SubmissionEstimate,
+    SubmissionEstimateRequest, SubmissionInvalidItem,
 )
 from pandatrack_common import codes
 from worker.billing.submission import (
@@ -17,6 +24,76 @@ from api.deps import Subject, get_repo, require_customer
 from api.errors import ApiProblem, map_billing_error
 
 router = APIRouter(prefix="/api/v1", tags=["submissions"])
+
+
+@router.post("/submissions/estimate", response_model=SubmissionEstimate)
+def estimate_submission(payload: SubmissionEstimateRequest,
+                        subject: Subject = Depends(require_customer),
+                        repo: BRepository = Depends(get_repo)):
+    """提交前预估（04 §5.4）：清洗分类 + 集合化免扣判定 + 余额快照。
+
+    只读事务（显式 rollback），不写 operation/ledger/outbox；与正式提交
+    使用同一 Cleaner 与同一免扣 SQL，保证口径一致（预估≠报价，以 202 为准）。
+    """
+    lines = payload.lines or []
+    if not lines:
+        raise ApiProblem(codes.INVALID_INPUT, {"reason": "empty_submission"})
+
+    cleaned = Cleaner().clean("\n".join(lines))
+    numbers = [c.normalized for c in cleaned.candidates
+               if c.billable and c.normalized]
+
+    billable = 0
+    balance = 0
+    with repo.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS _estimate_candidates")
+            cur.execute(
+                "CREATE TEMP TABLE _estimate_candidates ("
+                " seq INT PRIMARY KEY, normalized_number VARCHAR(50) NOT NULL) "
+                "ON COMMIT DROP"
+            )
+            if numbers:
+                with cur.copy(
+                    "COPY _estimate_candidates (seq, normalized_number) FROM STDIN"
+                ) as copy:
+                    for i, num in enumerate(set(numbers)):
+                        copy.write_row((i, num))
+            # 与 submit() 第 3 步同一免扣口径（30×24h active 窗口）
+            cur.execute(
+                "SELECT COUNT(*) FROM _estimate_candidates c "
+                "WHERE NOT EXISTS ("
+                "  SELECT 1 FROM billing_charge_window w "
+                "  WHERE w.customer_id=%s AND w.normalized_number=c.normalized_number "
+                "    AND w.active=true AND w.expires_at>now())",
+                (subject.customer_id,),
+            )
+            billable = cur.fetchone()[0]
+            cur.execute(
+                "SELECT balance FROM wallet WHERE customer_id=%s",
+                (subject.customer_id,),
+            )
+            row = cur.fetchone()
+            balance = row[0] if row else 0
+        conn.rollback()  # 只读：临时表随事务结束清理，不产生任何写入
+
+    total = len(cleaned.candidates)
+    free = len(set(numbers)) - billable
+    invalid = [
+        SubmissionInvalidItem(line_no=c.line_no, raw=c.raw_number[:100],
+                              reason=c.result_code)
+        for c in cleaned.candidates if not c.billable
+    ]
+    return SubmissionEstimate(
+        total_count=total,
+        billable_count=billable,
+        free_count=free,
+        points_estimate=billable,
+        balance=balance,
+        insufficient=balance < billable,
+        result_counts=cleaned.counts(),
+        invalid_items=invalid[:100],
+    )
 
 
 @router.post("/submissions", response_model=SubmissionAccepted, status_code=202)

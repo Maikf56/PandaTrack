@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { loadSession } from '../composables/session'
 import { splitDraft } from '../logic/draft'
+import pandaLogo from '../assets/panda-logo.jpeg'
 
 // 首页：粘贴单号即开始（04 §5.1）。前端只做长度/空值保护，不判格式。
 const router = useRouter()
@@ -20,17 +21,19 @@ async function start() {
   showEmptyTip.value = false
   const me = await loadSession()
   if (!me) {
-    // 未登录：保留输入（sessionStorage 草稿），登录成功后回到 /quick（04 §5.1/§5.2）
+    // 未登录：保留输入（sessionStorage 草稿），登录成功后回到提交路径（04 §5.1/§5.2）
     sessionStorage.setItem(DRAFT_STORAGE_KEY, text.value)
-    router.push({ name: 'login', query: { next: '/quick' } })
+    const target = draft.value.totalLines > 35 ? '/submit' : '/quick'
+    router.push({ name: 'login', query: { next: target } })
     return
   }
-  router.push({ name: 'quick' })
+  router.push({ name: draft.value.totalLines > 35 ? 'submit' : 'quick' })
 }
 </script>
 
 <template>
   <section class="hero">
+    <img :src="pandaLogo" alt="PandaTracking" class="hero-logo" />
     <h1>查询 USPS 包裹</h1>
     <p class="page-sub">
       粘贴或输入单号，一次完成清洗、计费与受理；结果在后台逐步更新。
@@ -48,8 +51,8 @@ async function start() {
       <p v-if="draft.totalLines > 0" class="hint" role="status">
         已接收 {{ draft.totalLines }} 行
         <template v-if="draft.overLong.length">；第 {{ draft.overLong.join('、') }} 行超过 100 字符</template>
-        <template v-if="draft.overLimit">
-          ；超过 35 行将走批量提交路径，上限与计费以服务端响应为准
+        <template v-if="draft.totalLines > 35">
+          ；将走批量提交路径，上限与计费以服务端响应为准
         </template>
       </p>
       <p class="hint fee-rule">
@@ -75,9 +78,10 @@ async function start() {
 
 <style scoped>
 .hero { max-width: 760px; margin: 0 auto; }
-.hero h1 { font-size: 28px; margin: 0 0 6px; }
+.hero-logo { width: 220px; height: auto; display: block; margin: 0 auto 8px; }
+.hero h1 { font-size: 30px; margin: 0 0 6px; text-align: center; letter-spacing: -0.5px; }
 .field-label { display: block; font-weight: 600; margin-bottom: 8px; }
-.hero-card { border-top: 3px solid var(--brand); }
+.hero-card { box-shadow: var(--shadow-1); }
 .fee-rule { font-weight: 500; }
 .hero-actions { display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
 </style>

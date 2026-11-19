@@ -54,3 +54,10 @@ def get_admin_subject(request: Request, repo: BRepository = Depends(get_repo)):
         raise ApiProblem(codes.SESSION_EXPIRED)
     return s
 
+
+@router.post("/whoami")
+def admin_whoami(admin: dict = Depends(get_admin_subject)):
+    """会话恢复：管理端刷新页面后用现有 Cookie 重建会话状态。"""
+    return {"admin_id": admin["public_id"], "username": admin["username"],
+            "role": admin["role"]}
+

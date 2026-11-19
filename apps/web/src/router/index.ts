@@ -17,6 +17,7 @@ const router = createRouter({
       component: () => import('../views/GuideView.vue'),
     },
     // 工作台（需登录）
+    { path: '/submit', name: 'submit', component: () => import('../views/SubmitView.vue'), meta: { auth: true } },
     { path: '/quick', name: 'quick', component: () => import('../views/QuickView.vue'), meta: { auth: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('../views/DashboardView.vue'), meta: { auth: true } },
     { path: '/results', name: 'results', component: () => import('../views/ResultsView.vue'), meta: { auth: true } },

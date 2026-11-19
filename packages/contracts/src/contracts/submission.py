@@ -59,3 +59,53 @@ class SubmissionAccepted(BaseModel):
     free_count: int = Field(default=0, ge=0)   # 滚动 30 天免扣条数
     invalid_items: list[SubmissionInvalidItem] = []
     batches: list[int] = []              # 批次序号（35 切片）
+
+
+class SubmissionEstimateRequest(BaseModel):
+    """预估请求（04 §5.4 实时解析面板；09 §5.2.1）：幂等、不入账、不构成报价。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[str] = Field(max_length=100_000)  # 预估可覆盖大批量粘贴
+    target_group_name: str | None = Field(default=None, max_length=50)
+
+
+class SubmissionEstimate(BaseModel):
+    """预估响应：分类计数 + 预估消耗 + 服务端余额快照（缺口不由前端计算）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_count: int = Field(ge=0)
+    billable_count: int = Field(ge=0)
+    free_count: int = Field(ge=0)          # 30 天窗口内免扣
+    points_estimate: int = Field(ge=0)     # billable - free
+    balance: int = Field(ge=0)             # 服务端余额快照
+    insufficient: bool = False
+    result_counts: dict[str, int] = Field(default_factory=dict)  # 清洗结果码分布
+    invalid_items: list[SubmissionInvalidItem] = []
+    estimated: bool = True                 # 常驻标注「预估，以提交结果为准」
+
+
+class ImportCreate(BaseModel):
+    """大批量导入创建（04 §5.4 文件路径 / §5.9 导入任务）：行数组一次受理。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_name: str | None = Field(default=None, max_length=200)
+    client_request_id: str = Field(min_length=8, max_length=50)
+    lines: list[str] = Field(max_length=100_000)   # 单请求上限；更大拆分多次
+    target_group_name: str | None = Field(default=None, max_length=50)
+
+
+class ImportAccepted(BaseModel):
+    """导入受理响应（202）：关联 import_job 与 operation，结果后台逐步更新。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    import_job_id: str = Field(pattern=UUID_PATTERN)
+    operation_id: str = Field(pattern=UUID_PATTERN)
+    total_count: int = Field(ge=0)
+    valid_count: int = Field(ge=0)
+    invalid_count: int = Field(ge=0)
+    points_charged: int = Field(ge=0)
+    free_count: int = Field(ge=0)

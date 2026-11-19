@@ -217,3 +217,27 @@ export interface SessionView {
   revoked: boolean
   current: boolean
 }
+
+// ---- 预估与导入（04 §5.4/§5.9，对齐 contracts/submission）----
+
+export interface SubmissionEstimate {
+  total_count: number
+  billable_count: number
+  free_count: number
+  points_estimate: number
+  balance: number
+  insufficient: boolean
+  result_counts: Record<string, number>
+  invalid_items: { line_no: number; raw: string; reason: string }[]
+  estimated: boolean
+}
+
+export interface ImportAccepted {
+  import_job_id: string
+  operation_id: string
+  total_count: number
+  valid_count: number
+  invalid_count: number
+  points_charged: number
+  free_count: number
+}
