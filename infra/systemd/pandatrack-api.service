@@ -1,0 +1,18 @@
+[Unit]
+Description=PandaTrack BFF API (FastAPI uvicorn, loopback only)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pandatrack
+Environment=PYTHONPATH=/home/ubuntu/pandatrack/apps/api/src:/home/ubuntu/pandatrack/apps/worker/src:/home/ubuntu/pandatrack/packages/common/src:/home/ubuntu/pandatrack/packages/contracts/src
+Environment=PT_EVENT_LISTEN=true
+EnvironmentFile=/home/ubuntu/pandatrack/.env
+ExecStart=/home/ubuntu/pandatrack/.venv/bin/python -m uvicorn api.app:create_app --factory --host 127.0.0.1 --port 8100
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
