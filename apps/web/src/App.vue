@@ -56,9 +56,15 @@ async function logout() {
         <div class="nav-group">查询</div>
         <RouterLink to="/quick">临时快查</RouterLink>
         <RouterLink to="/results">结果列表</RouterLink>
+        <RouterLink to="/stats">查询统计</RouterLink>
+        <div class="nav-group">记录</div>
         <RouterLink to="/submissions">提交记录</RouterLink>
+        <RouterLink to="/groups">组与批次</RouterLink>
+        <RouterLink to="/imports">导入任务</RouterLink>
+        <RouterLink to="/exports">导出任务</RouterLink>
         <div class="nav-group">账户</div>
         <RouterLink to="/wallet">积分中心</RouterLink>
+        <RouterLink to="/settings">设置</RouterLink>
         <div class="nav-group">帮助</div>
         <RouterLink to="/guide">使用指南</RouterLink>
         <RouterLink to="/products">产品说明</RouterLink>

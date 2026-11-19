@@ -42,6 +42,8 @@ export const api = {
   get: <T>(path: string, query?: Record<string, string | number | undefined>) =>
     request<T>('GET', path, { query }),
   post: <T>(path: string, json?: unknown) => request<T>('POST', path, { json }),
+  patch: <T>(path: string, json?: unknown) => request<T>('PATCH', path, { json }),
+  del: <T>(path: string) => request<T>('DELETE', path),
 }
 
 // ---- 契约类型（对齐 packages/contracts，前端只依赖 09 定义字段）----
@@ -129,4 +131,89 @@ export interface LedgerEntry {
 export interface StatusDict {
   statuses: { key: string; label_zh: string; terminal: boolean }[]
   item_state_enum: string[]
+}
+
+// ---- 次要页面契约（04 §5.8-5.12，对齐 contracts/groups_exports）----
+
+export interface GroupView {
+  id: string
+  name: string
+  is_default: boolean
+  archived: boolean
+  tracking_count: number
+  batch_count: number
+  status_distribution: Record<string, number>
+  created_at: string
+}
+
+export interface BatchView {
+  id: string
+  state: string
+  total_count: number
+  valid_count: number
+  points_charged: number
+  group_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BatchDetail {
+  id: string
+  state: string
+  total_count: number
+  valid_count: number
+  invalid_count: number
+  points_charged: number
+  completed: number
+  processing: number
+  missing: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ImportJobView {
+  id: string
+  file_name: string | null
+  status: string
+  total: number
+  done: number
+  enqueued: number
+  success_count: number
+  failed_count: number
+  skipped_count: number
+  duplicate_count: number
+  operation_id: string | null
+  created_at: string
+}
+
+export interface ExportJobView {
+  id: string
+  scope: string
+  scope_ref: string | null
+  format: string
+  file_name: string | null
+  row_count: number
+  status: string
+  expired: boolean
+  expires_at: string | null
+  created_at: string
+  download_url?: string | null
+}
+
+export interface StatsView {
+  days: number
+  submissions: number
+  tracking_count: number
+  points_charged: number
+  waived_count: number
+  status_distribution: Record<string, number>
+  daily: { date: string; submissions: number }[]
+}
+
+export interface SessionView {
+  id: number
+  created_at: string
+  expires_at: string
+  revoked: boolean
+  current: boolean
 }

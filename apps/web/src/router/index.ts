@@ -28,6 +28,12 @@ const router = createRouter({
       meta: { auth: true },
     },
     { path: '/wallet', name: 'wallet', component: () => import('../views/WalletView.vue'), meta: { auth: true } },
+    // 次要页面（04 §5.8-5.12）
+    { path: '/groups', name: 'groups', component: () => import('../views/GroupsView.vue'), meta: { auth: true } },
+    { path: '/imports', name: 'imports', component: () => import('../views/ImportsView.vue'), meta: { auth: true } },
+    { path: '/exports', name: 'exports', component: () => import('../views/ExportsView.vue'), meta: { auth: true } },
+    { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue'), meta: { auth: true } },
+    { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { auth: true } },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFoundView.vue') },
   ],
 })
