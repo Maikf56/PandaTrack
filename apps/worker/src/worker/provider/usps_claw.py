@@ -17,6 +17,7 @@ import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from worker.provider.contracts import tracking_ref
@@ -91,14 +92,18 @@ class SystemdRelayControl:
     """
 
     def __init__(self, *, env_file: str, service: str = "pandatrack-relay",
-                 socks5: str = "127.0.0.1:1080", runner=None) -> None:
+                 socks5: str = "127.0.0.1:1080", runner=None,
+                 geo_cert: str | None = None) -> None:
         self.env_file = env_file
         self.service = service
         self.socks5 = socks5
         self._runner = runner or SubprocessRunner()
+        # relay 对 ipinfo.io 做本地自签证书应答（scripts/local_relay.py），
+        # exit_geo 必须信任该证书，否则 SSL 校验失败（P7-e2e 修复）。
+        self.geo_cert = geo_cert or str(
+            Path.home() / ".pandatrack-secrets" / "geo.crt")
 
     def switch_region(self, region: str) -> None:
-        from pathlib import Path
         Path(self.env_file).write_text(f"PT_PROXY_REGION={region}\n", encoding="utf-8")
         self._runner.run(["sudo", "systemctl", "restart", self.service], timeout=30)
 
@@ -109,6 +114,7 @@ class SystemdRelayControl:
             proxies={"http": f"socks5h://{self.socks5}",
                      "https": f"socks5h://{self.socks5}"},
             timeout=15,
+            verify=self.geo_cert,
         )
         return r.json()
 
@@ -158,10 +164,17 @@ class ClawExecutor:
         return self.runner.run(argv, timeout=timeout)
 
     def _eval_json(self, js: str) -> dict:
-        """eval 一个 JSON.stringify 表达式并解析；失败返回空 dict。"""
+        """eval 一个 JSON.stringify 表达式并解析；失败返回空 dict。
+
+        clawctl eval 的输出是「JSON 字符串字面量再包一层」（带引号转义），
+        需二次解析；一次解析后若仍是 str 继续解（P7-e2e 实测）。
+        """
         raw = self._claw("eval", js, timeout=30)
         try:
-            return json.loads(raw.strip().splitlines()[-1])
+            val = json.loads(raw.strip().splitlines()[-1])
+            if isinstance(val, str):
+                val = json.loads(val)
+            return val if isinstance(val, dict) else {}
         except (ValueError, IndexError):
             return {}
 

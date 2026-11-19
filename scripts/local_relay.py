@@ -109,7 +109,8 @@ def geo_payload(host: str) -> bytes:
     if host == "ipinfo.io":
         body = {
             "ip": g["query"], "city": g["city"], "region": g["regionName"],
-            "country": g["countryCode"], "loc": f"{g.get('lat', 0)},{g.get('lon', 0)}",
+            "country": g["countryCode"], "countryCode": g["countryCode"],
+            "loc": f"{g.get('lat', 0)},{g.get('lon', 0)}",
             "timezone": g["timezone"], "org": g.get("org", g.get("isp", "")),
         }
     else:  # ipapi.co
