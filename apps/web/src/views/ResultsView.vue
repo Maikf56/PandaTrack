@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
 import { api, type TrackingView, type CheckUpdateResult } from '../api/client'
 import { loadStatusDict, session, statusLabel } from '../composables/session'
 import { visibilityPolling, createChangeTracker } from '../composables/sse'
 
 // 结果列表（04 §5.6/§8.2，G2 流程 3）：筛选 + 检查更新防呆 + 变化感知。
-const route = useRoute()
 const items = ref<TrackingView[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -24,12 +22,6 @@ const checking = ref(false)
 const tracker = createChangeTracker()
 const changeSummary = ref(0)
 const stopPolling = visibilityPolling(reload, 15000)
-
-const opFilter = computed(() =>
-  typeof route.query.op === 'string' ? route.query.op : undefined,
-)
-// opFilter 预留：批次过滤接口开放后接入（04 §5.6）
-void opFilter
 
 onMounted(async () => {
   await loadStatusDict()

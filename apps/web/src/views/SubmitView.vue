@@ -58,7 +58,9 @@ onMounted(async () => {
 })
 
 // 实时解析面板：输入即算，防抖 300ms 调服务端预估接口（04 §5.4）
+// 竞态守卫：只采纳最后一次请求的响应（连续输入时旧响应可能后到）。
 let estimateTimer: ReturnType<typeof setTimeout> | null = null
+let estimateSeq = 0
 watch(text, () => {
   accepted.value = null
   error.value = ''
@@ -72,13 +74,14 @@ watch(text, () => {
 })
 
 async function runEstimate() {
+  const seq = ++estimateSeq
   estimating.value = true
   estimateError.value = ''
   try {
     const { data } = await api.post<SubmissionEstimate>('/api/v1/submissions/estimate', {
       lines: draft.value.lines.slice(0, MAX_IMPORT_LINES),
     })
-    estimate.value = data
+    if (seq === estimateSeq) estimate.value = data
   } catch (e) {
     estimate.value = null
     estimateError.value = (e as { message: string }).message
@@ -106,13 +109,15 @@ function removeFile() {
   if (fileInput.value) fileInput.value.value = ''
 }
 
+// 预估接口失败不阻断提交（受理不依赖预估；服务端才是计费权威），
+// 但预估已判余额不足时必须禁用（防呆，避免注定失败的 409 请求）。
+const estimateBlocked = computed(() => estimate.value != null && estimate.value.insufficient)
 const canSubmit = computed(() =>
   !submitting.value &&
   draft.value.totalLines > 0 &&
   !overImportLimit.value &&
   !draft.value.overLong.length &&
-  estimate.value != null &&
-  !estimate.value.insufficient,
+  !estimateBlocked.value,
 )
 const insufficientGap = computed(() =>
   estimate.value ? estimate.value.points_estimate - estimate.value.balance : 0,
@@ -193,7 +198,7 @@ function copyInvalid() {
       </ul>
       <p class="hint">本次提交已自动归入默认组；结果可在结果列表、组与批次中找回。</p>
       <div class="actions">
-        <RouterLink class="btn" :to="`/results?op=${acceptedKind === 'import' ? (accepted as ImportAccepted).operation_id : (accepted as SubmissionAccepted).operation_id}`">查看进度</RouterLink>
+        <RouterLink class="btn" :to="acceptedKind === 'import' ? '/imports' : '/results'">查看进度</RouterLink>
         <RouterLink v-if="acceptedKind === 'import'" class="btn ghost" to="/imports">查看导入任务</RouterLink>
         <button class="btn ghost" @click="accepted = null; text = ''; fileName = null; estimate = null">继续提交</button>
         <RouterLink class="btn ghost" to="/dashboard">返回工作台</RouterLink>
