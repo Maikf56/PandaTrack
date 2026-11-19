@@ -24,8 +24,11 @@ from api.app import create_app  # noqa: E402
 from api.data import BRepository  # noqa: E402
 
 DB_B = os.environ.get("PT_DB_B_URL")
+DB_A = os.environ.get("PT_DB_A_URL")
 pytestmark = pytest.mark.skipif(
     not DB_B, reason="未设 PT_DB_B_URL，跳过预估/导入集成测试")
+
+from _dbtest_cleanup import purge_a_numbers, purge_b_outbox_by_numbers  # noqa: E402
 
 A = "9302010623396181820639"   # 与 test_submission_billing 同源样本
 B = "9400150206217997979667"
@@ -44,6 +47,10 @@ def customer():
     ctx: dict = {}
 
     def _cleanup():
+        # worker 已常驻：先清 A 库与 billing_outbox，阻断真实代理采集。
+        if DB_A:
+            purge_a_numbers(DB_A, A, B)
+            purge_b_outbox_by_numbers(DB_B, A, B)
         with psycopg.connect(DB_B) as conn:
             with conn.cursor() as cur:
                 cid = ctx.get("customer_id")

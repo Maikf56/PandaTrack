@@ -342,8 +342,15 @@ def build_components(settings: WorkerSettings) -> dict[str, Any]:
     sync = SyncAgent(connect_a, connect_b)
 
     from worker.billing.consumer import BillingOutboxConsumer
+    import os as _os
+    skip = frozenset(filter(None, (s.strip() for s in
+                   _os.environ.get("PT_ENQUEUE_SKIP_NUMBERS", "").split(","))))
+    if skip:
+        logging.getLogger("pandatrack.worker").info(
+            "enqueue blacklist active: %d number(s)", len(skip))
     enqueue = BillingOutboxConsumer(connect_a, connect_b,
-                                    batch_size=settings.enqueue_batch)
+                                    batch_size=settings.enqueue_batch,
+                                    skip_numbers=skip)
 
     def reset() -> None:
         connect_a.reset()

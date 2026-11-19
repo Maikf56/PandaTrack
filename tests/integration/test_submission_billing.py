@@ -15,7 +15,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps" / "worker" / "src"))
 
 DB_URL = os.environ.get("PT_DB_B_URL")
+DB_A_URL = os.environ.get("PT_DB_A_URL")
 pytestmark = pytest.mark.skipif(not DB_URL, reason="未设 PT_DB_B_URL，跳过 DB 集成测试")
+
+from _dbtest_cleanup import purge_a_numbers, purge_b_outbox_by_numbers  # noqa: E402
 
 psycopg = pytest.importorskip("psycopg", reason="未安装 psycopg3，跳过 DB 集成测试")
 
@@ -30,6 +33,10 @@ C = "9202090134607473901665"
 
 def _cleanup(cid: int) -> None:
     """按外键从表到主表清理测试客户（charge_reservation/outbox 无 customer_id）。"""
+    # worker 已常驻：先清 A 库与 billing_outbox，阻断真实代理采集。
+    if DB_A_URL:
+        purge_a_numbers(DB_A_URL, A, B, C)
+        purge_b_outbox_by_numbers(DB_URL, A, B, C)
     with psycopg.connect(DB_URL) as conn:
         with conn.cursor() as cur:
             cur.execute(

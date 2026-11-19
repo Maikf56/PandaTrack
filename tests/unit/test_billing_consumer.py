@@ -250,3 +250,27 @@ def test_stats_to_dict_omits_zero_fields():
     assert s.to_dict() == {}
     s.enqueued = 3
     assert s.to_dict() == {"enqueued": 3}
+
+
+# ------------------------------------------------- 环境黑名单（测试隔离）----
+def test_skip_numbers_blocks_only_listed_candidates():
+    """黑名单命中不入队（防常驻 worker 为测试单号真实采集）；事件仍 processed。"""
+    h = Harness()
+    h.seed_event(payload=_payload(numbers=("9400110200812345001",
+                                           "9302010623396181820639")))
+    c = h.stub_fetch_batch(skip_numbers=frozenset({"9302010623396181820639"}))
+    stats = c.run_once()
+    assert stats.skipped_env == 1
+    assert stats.processed == 1
+    assert stats.enqueued == 1          # 仅黑名单外的单号入队
+
+
+def test_skip_numbers_all_blocked_still_processed():
+    """全部命中黑名单：不入队但事件必须标记 processed（否则无限重试）。"""
+    h = Harness()
+    h.seed_event(payload=_payload(numbers=("9302010623396181820639",)))
+    c = h.stub_fetch_batch(skip_numbers=frozenset({"9302010623396181820639"}))
+    stats = c.run_once()
+    assert stats.skipped_env == 1
+    assert stats.processed == 1
+    assert stats.enqueued == 0

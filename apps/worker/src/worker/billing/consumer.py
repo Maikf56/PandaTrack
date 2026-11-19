@@ -43,12 +43,14 @@ class EnqueueStats:
     processed: int = 0          # 成功标记 processed 的事件数
     retried: int = 0            # 失败 attempts+1 的事件数
     abandoned: int = 0          # 达上限放弃（含 digest 校验失败）的事件数
+    skipped_env: int = 0        # 环境黑名单命中（测试单号等）不入队
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: v for k, v in {
             "scanned": self.scanned, "enqueued": self.enqueued,
             "skipped_active": self.skipped_active,
+            "skipped_env": self.skipped_env,
             "processed": self.processed, "retried": self.retried,
             "abandoned": self.abandoned}.items() if v}
         if self.errors:
@@ -79,14 +81,21 @@ class BillingOutboxConsumer:
 
     connect_a / connect_b 返回原生连接（PersistentConnect 兼容）；
     事件级隔离：单事件失败只影响自身，不阻塞批次。
+
+    skip_numbers：环境级单号黑名单（PT_ENQUEUE_SKIP_NUMBERS，逗号分隔）。
+    命中的候选不建 tracking/fetch_job，事件仍标记 processed。用途：真库
+    集成测试与 worker 常驻共用一套库时，阻断测试单号触发真实代理采集
+    （teardown 删 outbox 存在竞态窗口：daemon 可能已取走事件）。
     """
 
     def __init__(self, connect_a: Callable[[], Any], connect_b: Callable[[], Any],
-                 *, batch_size: int = 50, max_attempts: int = MAX_ATTEMPTS):
+                 *, batch_size: int = 50, max_attempts: int = MAX_ATTEMPTS,
+                 skip_numbers: frozenset[str] = frozenset()):
         self._ca = connect_a
         self._cb = connect_b
         self._batch = max(1, batch_size)
         self._max_attempts = max(1, max_attempts)
+        self._skip_numbers = frozenset(skip_numbers)
 
     # ---- 主流程 ----
     def run_once(self) -> EnqueueStats:
@@ -129,6 +138,11 @@ class BillingOutboxConsumer:
         if payload_digest(payload) != ev["digest"]:
             raise ValueError(DIGEST_MISMATCH)
         candidates = extract_candidates(payload)
+        blocked = [c for c in candidates if c in self._skip_numbers]
+        if blocked:
+            stats.skipped_env += len(blocked)
+            candidates = [c for c in candidates if c not in self._skip_numbers]
+            log.info("enqueue skip (env blacklist): %d candidate(s)", len(blocked))
 
         enqueued, skipped_active, skipped_terminal = self._enqueue_all(
             candidates)
