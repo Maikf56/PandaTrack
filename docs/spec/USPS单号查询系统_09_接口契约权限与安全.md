@@ -18,6 +18,7 @@
 ### 3.1 客户 API 基线
 
 - `POST /api/v1/submissions`：一次完成清洗、计费、入队和原子受理；返回 202、operation ID、实际扣费和分类汇总，幂等键为客户/端点/client_request_id。
+- `POST /api/v1/submissions/estimate`：提交前预估（G2 增补，见 §5.2.1），幂等不入账、不构成报价。
 - `GET /api/v1/operations/{id}`：授权 operation 快照、批次进度和摘要。
 - `GET /api/v1/events`：当前租户授权的 SSE，支持 Last-Event-ID 和 reset。
 - `POST /api/v1/check-updates`：客户主动检查，fresh 命中不创建新 FetchJob。
@@ -50,7 +51,7 @@
 | 类型 | 路径 | 作用 |
 |---|---|---|
 | 客户认证 | `/api/v1/auth/login`、`/api/v1/auth/me` | 登录、会话和席位快照 |
-| 提交 | `/api/v1/submissions` | 一次完成清洗、计费、入队和受理 |
+| 提交 | `/api/v1/submissions`、`/api/v1/submissions/estimate` | 一次完成清洗、计费、入队和受理；提交前预估（不入账） |
 | 进度 | `/api/v1/operations/{id}`、`/api/v1/events` | 快照、SSE、断线恢复 |
 | 轨迹 | `/api/v1/trackings`、`/api/v1/trackings/{id}`、`/api/v1/check-updates` | 客户投影和主动检查 |
 | 账务 | `/api/v1/billing/wallet`、`/api/v1/billing/ledger`、`/api/v1/billing/redemptions` | 余额、流水、兑换码 |
@@ -116,6 +117,27 @@
 ```json
 { "detail": { "code": "idempotency_conflict", "message": "该请求编号已用于另一份提交内容，请重新发起" } }
 ```
+
+### 5.2.1 提交前预估 `POST /api/v1/submissions/estimate`（G2 增补）
+
+请求头同 §5.2；请求体同 §5.2（`raw_text`）。服务端按 06 §3.1/3.2 做与正式提交完全相同的清洗与计费资格判定，但**不入账、不写 reservation、不产生 operation、不占幂等键业务语义**（同请求内容重复调用返回相同结果）。
+
+成功 200：
+```json
+{
+  "item_count": 2,
+  "counts": { "valid": 2, "waived_30d": 0, "duplicate_in_operation": 0,
+              "carrier_mismatch": 0, "garbled": 0, "（其余分类同 §5.2 counts）": 0 },
+  "points_estimated": 2,
+  "cleaner_version": "v1"
+}
+```
+
+约束：
+
+- 预估结果**不构成报价**、不设报价有效期、不作为任何扣费依据；最终扣费以正式提交的 202 响应为唯一权威。
+- 前端以防抖方式调用（输入停顿 ≥300ms），用于实时解析面板与成本预估条展示；禁止前端本地计算计费。
+- 预估与提交之间库内事实可能变化（他人提交、后台保鲜），新增数量可能减少——属预期行为，前端预估条须标注"预估，以提交结果为准"。
 
 ### 5.3 进度 `GET /api/v1/operations/{id}`
 
