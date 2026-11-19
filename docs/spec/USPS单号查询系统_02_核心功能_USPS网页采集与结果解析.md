@@ -61,7 +61,29 @@ FetchJob 领取/租约
   → finally：关闭浏览器、删除档案、清理约 500M/批的会话目录
 ```
 
-采集只通过真实浏览器内页面自身响应/DOM 取得结果；不伪造页面请求参数、不直调内部 XHR、不以 curl_cffi 或裸 HTTP 替代页面查询。采集执行后端为 ClawBrowser 引擎级指纹浏览器：指纹在 C++ 引擎层注入（2026-11-18 实测 3/3 通过真实结果页），裸内核 Playwright/Patchright 直连查询页实测被 Akamai 拦截，故不作为兜底。多环境采集默认采用 udealproxy 住宅代理：Socks5 协议、一个 profile 绑定一个代理出口，出口在浏览器启动时自动分配并在会话有效期内复用。独立环境、持久化会话和代理绑定用于正常并行接入；阻断后按 §5.8 自动换出口 IP → 换环境 → 回炉。
+采集只通过真实浏览器内页面自身响应/DOM 取得结果；不伪造页面请求参数、不直调内部 XHR、不以 curl_cffi 或裸 HTTP 替代页面查询。采集执行后端为 ClawBrowser 引擎级指纹浏览器：指纹在 C++ 引擎层注入（历史记录 2026-11-18 实测 3/3 通过真实结果页，为当时验证记载、非当前代码事实），裸内核 Playwright/Patchright 直连查询页实测被 Akamai 拦截，故不作为兜底。多环境采集默认采用 udealproxy 住宅代理：Socks5 协议、一个 profile 绑定一个代理出口，出口在浏览器启动时自动分配并在会话有效期内复用。独立环境、持久化会话和代理绑定用于正常并行接入；阻断后按 §5.8 自动换出口 IP → 换环境 → 回炉。
+
+#### 采集会话前置：USPS 首页暖场（2026-11-19 实测定案）
+
+**强约束**：每个浏览器会话在打开跟踪页之前，必须先打开 `https://www.usps.com/` 首页并停留约 8 秒，让页面脚本建立 Akamai 初始会话 cookie，再导航到跟踪页。跳过此步直接打开 `tools.usps.com/go/TrackConfirmAction?tLabels=...` 会被稳定硬拦：页面为空标题 + 约 252KB 混淆脚本、`_abck` 固定含 `~-1~`、`document.body.innerText` 长度为 0，等待 60 秒也不会放行；这不是可等待执行的 JS 挑战（与 §5.1 `challenge` 的"空标题+大混淆脚本"分类器特征需区分：本例是未暖场导致的硬拦，归类为 `page_type_unknown` / 探针失败，不应等待）。
+
+- 实测证据（2026-11-19，profile + udealproxy 住宅出口）：先开首页 → `body.innerText.length≈7100`（正常首页）；再开跟踪页 → `length≈4800`、`.tb-step=1`、`.product_summary=1`、单号正确绑定、摘要为真实文案。同一出口同一会话跳过暖场则 `length=0`、持续 `~-1~`。
+- 因此 §3.1 链路中"暖场站点 → USPS 首页探测"不是可选的连通性探针，而是**采集会话的强制前置步骤**：既做出口准入判断，又建立后续跟踪页所需的会话状态。实现上放在每个环境档案创建后、任何查询提交前；换出口/换环境重建会话后必须重新暖场。
+- 入口 URL 会由 `tools.usps.com/go/TrackConfirmAction?tLabels=<no>` 跳转到 `tools.usps.com/tracking/<no>`，这是正常跳转，不是拦截；以 `.tb-step` 是否出现判定是否取得真实结果，不以 URL 形态判定。
+
+#### 网络与流量口径（2026-11-19 实测澄清，防再次误判）
+
+采集链路涉及三种不同的"网络/流量"，职责边界必须分清，禁止混为一谈：
+
+| 项 | 归属 | 在本系统中的角色 | 是否消耗 ClawBrowser 账户流量 |
+|---|---|---|---|
+| 服务器本地网络 / 本地 SOCKS5 中继（127.0.0.1:1080） | 自建 | 浏览器连接入口；转发流量、截胡 geo 预检（见下） | 否 |
+| udealproxy 住宅代理（三方） | 用户提供 | **真正的出口 IP**，USPS 看到的来源；profile 以 `--manual-proxy socks5` 绑定 | 否 |
+| ClawBrowser 账户流量（`proxy_traffic`，1 MiB 试用额度） | ClawBrowser 官方 | 仅当用官方 `--country US` 出口/官方 verify 时才消耗；manual 三方代理模式不走它 | 仅官方出口模式消耗 |
+
+- **事实**：当前采集为 manual 三方代理模式，出口是 udealproxy 住宅 IP。实测对 USPS 跟踪页连续访问 3 次，`clawctl proxy-traffic` 的 `used` 始终为 `1.00 MiB` 不变，证明采集流量**不经** ClawBrowser 官方账户。`proxy_traffic: exhausted / remaining 0 B` 只是账户余额状态显示，不代表当前链路在扣费，更不是采集失败的原因。
+- **禁止的误判**：不得把 `proxy_traffic exhausted` 或 `clawctl verify` 中 `proxy ... actual=N/A`（该项检验的是 ClawBrowser 官方托管代理区域，manual 三方代理模式下天然不适用）当作 Akamai 拦截的根因。历史上曾据此误判并浪费排查时间。USPS 拦截的根因排查顺序见 5.8 与本节"首页暖场"。
+- **geo 预检**：ClawBrowser 会访问 `ipinfo.io` / `ipapi.co` 判断出口地理位置，对住宅 IP 常返回 406/429。本地 SOCKS5 中继截胡这两个域名的请求，用经同一粘 IP 出口查到的真实 geo 应答，保证"指纹区域 / geo 预检 / 实际出口"三者一致（对齐本文"环境与指纹构成"约束）。
 
 #### ClawBrowser 环境与指纹构成（2026-11-19 定案）
 
