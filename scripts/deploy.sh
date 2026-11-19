@@ -19,7 +19,7 @@ for key in DATABASE_A_URL DATABASE_B_URL PT_DB_A_URL PT_DB_B_URL; do
 done
 command -v python3 >/dev/null || { echo "缺少 python3"; exit 1; }
 command -v npm >/dev/null    || { echo "缺少 npm（Node.js 20+）"; exit 1; }
-[ -d .venv ] || { echo "缺少 .venv —— 先执行: python3 -m venv .venv && .venv/bin/pip install -e ."; exit 1; }
+[ -d .venv ] || { echo "缺少 .venv —— 先执行: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
 [ -f /etc/nginx/certs/ginzavog-fullchain.pem ] \
   || warn "未找到 TLS 证书 /etc/nginx/certs/ginzavog-fullchain.pem，nginx 步骤将跳过站点启用（先上传证书再重跑）"
 
@@ -33,7 +33,7 @@ fi
 
 # ---------- 2. Python 依赖 ----------
 log "2/7 Python 依赖同步"
-.venv/bin/pip install -q -e .
+.venv/bin/pip install -q -r requirements.txt
 
 # ---------- 3. 数据库迁移（幂等） ----------
 log "3/7 数据库迁移"
