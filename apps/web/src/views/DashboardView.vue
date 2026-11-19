@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, type LedgerEntry, type TrackingView } from '../api/client'
 import { loadSession, session, loadStatusDict } from '../composables/session'
+import { useSse } from '../composables/sse'
 
 // 工作台首页（04 §5.5）：现在需要关注什么 + 我刚才做了什么。
+// SSE 客户触发式呈现（04 §6.3）：事件到达只提示，客户点击才刷新，不自动改行。
+const { hasUpdate, open, close } = useSse()
 const loading = ref(true)
 const error = ref('')
 const recentLedger = ref<LedgerEntry[]>([])
@@ -14,17 +17,30 @@ onMounted(async () => {
   await loadStatusDict()
   try {
     const [w, t] = await Promise.all([
-      api.get<LedgerEntry[]>('/api/v1/ledger', { limit: 5 }),
+      api.get<LedgerEntry[]>('/api/v1/billing/ledger', { limit: 5 }),
       api.get<TrackingView[]>('/api/v1/trackings'),
     ])
     recentLedger.value = w.data
     recentResults.value = t.data.slice(0, 5)
+    open() // 数据就绪后再订阅，重连由 EventSource 自动处理
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
     loading.value = false
   }
 })
+
+onUnmounted(() => close())
+
+async function refreshResults() {
+  hasUpdate.value = false
+  try {
+    const { data } = await api.get<TrackingView[]>('/api/v1/trackings')
+    recentResults.value = data.slice(0, 5)
+  } catch {
+    /* 静默，保留现有内容 */
+  }
+}
 
 const me = computed(() => session.me)
 const statusCount = computed(() => recentResults.value.length)
@@ -57,7 +73,14 @@ const statusCount = computed(() => recentResults.value.length)
       <div class="card main-actions">
         <RouterLink class="btn" to="/quick">提交单号查询</RouterLink>
         <RouterLink class="btn ghost" to="/results">查看结果列表</RouterLink>
+        <RouterLink class="btn ghost" to="/submissions">提交记录</RouterLink>
         <RouterLink class="btn ghost" to="/wallet">积分中心</RouterLink>
+      </div>
+
+      <!-- SSE 有更新：轻提示，客户点击才刷新（04 §8.2/§6.3） -->
+      <div v-if="hasUpdate" class="card sse-hint" role="status">
+        有新的进度更新。
+        <button class="btn sm" @click="refreshResults">刷新查看</button>
       </div>
 
       <div class="card">
@@ -87,6 +110,7 @@ const statusCount = computed(() => recentResults.value.length)
 .stat-num { font-size: 26px; font-weight: 700; margin: 4px 0; }
 .stat-label { color: var(--fg-soft); font-size: 13px; margin: 0; }
 .main-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.sse-hint { display: flex; align-items: center; gap: 12px; border-left: 4px solid var(--ok); }
 @media (max-width: 860px) {
   .cards-row { grid-template-columns: 1fr; }
 }

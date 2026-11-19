@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from contracts.progress import BatchProgress, OperationProgress
+from contracts.progress import BatchProgress, OperationProgress, OperationSummary
 from contracts.tracking import (
     CheckUpdatesRequest, CheckUpdatesResult, TrackingEventView, TrackingView,
 )
@@ -19,6 +19,20 @@ from api.deps import Subject, get_repo, require_customer
 from api.errors import ApiProblem
 
 router = APIRouter(prefix="/api/v1", tags=["tracking"])
+
+
+@router.get("/operations", response_model=list[OperationSummary])
+def list_operations(limit: int = 50, offset: int = 0,
+                    subject: Subject = Depends(require_customer),
+                    repo: BRepository = Depends(get_repo)):
+    """提交记录列表（04 §5.9）：按当前客户过滤，最新在前。"""
+    rows, _total = repo.list_operations(subject.customer_id, limit=min(limit, 200),
+                                        offset=max(offset, 0))
+    return [OperationSummary(
+        id=r["public_id"], state=r["state"], total_count=r["total_count"],
+        valid_count=r["valid_count"], invalid_count=r["invalid_count"],
+        points_charged=r["points_charged"], created_at=r["created_at"],
+    ) for r in rows]
 
 
 @router.get("/operations/{operation_id}", response_model=OperationProgress)

@@ -188,6 +188,22 @@ class TestTrackingEndpoints:
         r = c.get("/api/v1/operations/cccccccc-cccc-cccc-cccc-cccccccccccc")
         assert r.status_code == 404 and r.json()["detail"]["code"] == "not_found"
 
+    def test_list_operations_tenant_scoped(self):
+        repo = MagicMock()
+        repo.list_operations.return_value = ([
+            {"public_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "state": "completed",
+             "total_count": 2, "valid_count": 2, "invalid_count": 0,
+             "points_charged": 2, "created_at": "2026-11-19T08:00:00+00:00"},
+        ], 1)
+        c = self._authed(repo)
+        r = c.get("/api/v1/operations")
+        assert r.status_code == 200, r.text
+        items = r.json()
+        assert items[0]["id"] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        # 强制 customer scope + limit 封顶
+        kwargs = repo.list_operations.call_args.kwargs
+        assert kwargs["limit"] <= 200
+
     def test_tracking_view_whitelist(self):
         repo = MagicMock()
         repo.tracking.return_value = {

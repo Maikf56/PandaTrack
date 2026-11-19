@@ -57,7 +57,8 @@ async function start() {
       </p>
       <div class="hero-actions">
         <button class="btn" @click="start">开始查询</button>
-        <RouterLink class="btn ghost" to="/guide">查看使用指南</RouterLink>
+        <RouterLink class="btn ghost" to="/products">查看产品说明</RouterLink>
+        <RouterLink class="btn ghost" to="/pricing">积分套餐</RouterLink>
       </div>
       <p class="hint">点击「开始查询」即提交并按规则扣费；提交前无预览或报价步骤。</p>
     </div>

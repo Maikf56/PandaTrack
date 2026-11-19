@@ -208,6 +208,28 @@ class BRepository:
                 "state": row[2], "total_count": row[3], "valid_count": row[4],
                 "invalid_count": row[5], "points_charged": row[6]}
 
+    def list_operations(self, customer_id: int, *,
+                        limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        """客户提交记录列表（tenant scope，最新在前；对外仅 public_id）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM submission_operation WHERE customer_id=%s",
+                    (customer_id,))
+                total = cur.fetchone()[0]
+                cur.execute(
+                    """SELECT public_id, state, total_count, valid_count,
+                              invalid_count, points_charged, created_at
+                       FROM submission_operation
+                       WHERE customer_id=%s
+                       ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+                    (customer_id, limit, offset))
+                rows = cur.fetchall()
+        return ([{"public_id": str(r[0]), "state": r[1], "total_count": r[2],
+                  "valid_count": r[3], "invalid_count": r[4], "points_charged": r[5],
+                  "created_at": r[6].isoformat() if r[6] else ""}
+                 for r in rows], total)
+
     def operation_batches(self, operation_id: int) -> list[dict]:
         """批次进度聚合（done/processing/deferred/suspended 由 item/batch state 汇总）。"""
         with self.connect() as conn:

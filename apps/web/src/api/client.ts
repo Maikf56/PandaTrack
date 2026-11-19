@@ -64,6 +64,16 @@ export interface SubmissionAccepted {
   invalid_items: { line_no: number; raw: string; reason: string }[]
 }
 
+export interface OperationSummary {
+  id: string
+  state: string
+  total_count: number
+  valid_count: number
+  invalid_count: number
+  points_charged: number
+  created_at: string
+}
+
 export interface OperationProgress {
   id: string
   state: string

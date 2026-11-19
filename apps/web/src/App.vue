@@ -28,9 +28,12 @@ async function logout() {
     <header class="pub-nav">
       <RouterLink to="/" class="brand">PandaTrack</RouterLink>
       <nav>
+        <RouterLink to="/products">产品说明</RouterLink>
+        <RouterLink to="/pricing">积分套餐</RouterLink>
         <RouterLink to="/guide">使用指南</RouterLink>
         <template v-if="!isLoggedIn">
           <RouterLink to="/login">登录</RouterLink>
+          <RouterLink to="/trial">申请试用</RouterLink>
         </template>
         <template v-else>
           <RouterLink to="/dashboard">工作台</RouterLink>
@@ -53,10 +56,12 @@ async function logout() {
         <div class="nav-group">查询</div>
         <RouterLink to="/quick">临时快查</RouterLink>
         <RouterLink to="/results">结果列表</RouterLink>
+        <RouterLink to="/submissions">提交记录</RouterLink>
         <div class="nav-group">账户</div>
         <RouterLink to="/wallet">积分中心</RouterLink>
         <div class="nav-group">帮助</div>
         <RouterLink to="/guide">使用指南</RouterLink>
+        <RouterLink to="/products">产品说明</RouterLink>
       </nav>
     </aside>
     <div class="ws-body">

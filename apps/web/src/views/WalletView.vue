@@ -22,8 +22,8 @@ async function reload() {
   loading.value = true
   try {
     const [s, l] = await Promise.all([
-      api.get<BillingSummary>('/api/v1/wallet'),
-      api.get<LedgerEntry[]>('/api/v1/ledger', { limit: 100 }),
+      api.get<BillingSummary>('/api/v1/billing/wallet'),
+      api.get<LedgerEntry[]>('/api/v1/billing/ledger', { limit: 100 }),
     ])
     summary.value = s.data
     ledger.value = l.data
@@ -52,7 +52,7 @@ async function redeem() {
   }
   redeeming.value = true
   try {
-    await api.post('/api/v1/redemptions', { code })
+    await api.post('/api/v1/billing/redemptions', { code })
     redeemMsg.value = '兑换成功，余额已更新。'
     redeemCode.value = ''
     await Promise.all([reload(), loadSession(true)])

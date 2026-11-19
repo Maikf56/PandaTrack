@@ -4,9 +4,13 @@ import { loadSession } from '../composables/session'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // 公共区（04 §2.1 八路由；本轮核心切片先落地首页/登录/指南骨架）
+    // 公共区（04 §2.1 八路由）
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+    { path: '/products', name: 'products', component: () => import('../views/ProductsView.vue') },
+    { path: '/pricing', name: 'pricing', component: () => import('../views/PricingView.vue') },
+    { path: '/trial', name: 'trial', component: () => import('../views/TrialView.vue') },
+    { path: '/forgot', name: 'forgot', component: () => import('../views/ForgotView.vue') },
     {
       path: '/guide',
       name: 'guide',
@@ -16,6 +20,7 @@ const router = createRouter({
     { path: '/quick', name: 'quick', component: () => import('../views/QuickView.vue'), meta: { auth: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('../views/DashboardView.vue'), meta: { auth: true } },
     { path: '/results', name: 'results', component: () => import('../views/ResultsView.vue'), meta: { auth: true } },
+    { path: '/submissions', name: 'submissions', component: () => import('../views/SubmissionsView.vue'), meta: { auth: true } },
     {
       path: '/results/:id',
       name: 'tracking-detail',

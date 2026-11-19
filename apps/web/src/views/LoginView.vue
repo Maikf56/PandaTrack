@@ -73,9 +73,9 @@ async function submit() {
         </button>
       </form>
       <p class="hint links">
-        <a href="#" @click.prevent>忘记密码（待开放）</a>
+        <RouterLink to="/forgot">忘记密码</RouterLink>
         ·
-        <a href="#" @click.prevent>申请试用（待开放）</a>
+        <RouterLink to="/trial">申请试用</RouterLink>
       </p>
     </div>
   </section>
