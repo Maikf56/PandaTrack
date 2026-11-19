@@ -17,6 +17,7 @@ from worker.scheduler.freshness import Fact, UpstreamState, decide, Branch
 from api.data import BRepository
 from api.deps import Subject, get_repo, require_customer
 from api.errors import ApiProblem
+from api.translate import SUPPORTED_LANGS, translate_texts
 
 router = APIRouter(prefix="/api/v1", tags=["tracking"])
 
@@ -56,18 +57,24 @@ def get_operation(operation_id: str,
 
 
 @router.get("/trackings", response_model=list[TrackingView])
-def list_trackings(subject: Subject = Depends(require_customer),
+def list_trackings(lang: str | None = None,
+                   subject: Subject = Depends(require_customer),
                    repo: BRepository = Depends(get_repo)):
-    return [_to_view(r) for r in repo.list_trackings(subject.customer_id)]
+    rows = repo.list_trackings(subject.customer_id)
+    if lang:
+        rows = [_with_lang(r, lang, repo) for r in rows]
+    return [_to_view(r) for r in rows]
 
 
 @router.get("/trackings/{tracking_uuid}", response_model=TrackingView)
-def get_tracking(tracking_uuid: str,
+def get_tracking(tracking_uuid: str, lang: str | None = None,
                  subject: Subject = Depends(require_customer),
                  repo: BRepository = Depends(get_repo)):
     row = repo.tracking(tracking_uuid, subject.customer_id)
     if row is None:
         raise ApiProblem(codes.NOT_FOUND)
+    if lang:
+        row = _with_lang(row, lang, repo)
     return _to_view(row)
 
 
@@ -93,6 +100,33 @@ def check_updates(payload: CheckUpdatesRequest,
             will_fetch=(decision.branch == Branch.NEED_FETCH),
         ))
     return out
+
+
+def _with_lang(row: dict, lang: str, repo: BRepository) -> dict:
+    """按 lang 机翻事件描述（增值降级：无 key/失败保持原文，原样返回）。
+
+    仅翻 description 自由文本；label_zh/status_key 走静态字典不过机翻。
+    """
+    lang = (lang or "").strip().lower()
+    if lang not in SUPPORTED_LANGS:
+        return row
+    events = [e for e in (row.get("events") or []) if isinstance(e, dict)]
+    texts = [(e.get("description") or e.get("description_zh") or "")
+             for e in events]
+    if not any(texts):
+        return row
+    mapping = translate_texts(repo=repo, lang=lang, texts=texts)
+    if not mapping:
+        return row
+    translated_rows = []
+    for e, text in zip(events, texts):
+        e = dict(e)
+        if text and text in mapping:
+            e["description"] = mapping[text]
+        translated_rows.append(e)
+    row = dict(row)
+    row["events"] = translated_rows
+    return row
 
 
 def _to_view(row: dict) -> TrackingView:

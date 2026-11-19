@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { api, type LedgerRow } from '../api/client'
+import { api, can, type LedgerRow } from '../api/client'
 
 // 账务操作（03 §3.2）：积分调整只追加 PointsLedger（不直接 patch 余额）；
 // 高风险操作——理由必填 + 弹窗二次确认 + 强制审计。
+// RBAC：仅具备 billing:write 的角色可见调整表单（后端权威校验）。
+const canWrite = can('billing:write')
 const customerId = ref('')
 const delta = ref<number | null>(null)
 const description = ref('')
@@ -100,7 +102,7 @@ const ledgerTypeZh: Record<string, string> = {
       积分调整只追加流水记录，不直接修改钱包余额；每笔操作强制审计（03 §3.2）。
     </p>
 
-    <div class="card">
+    <div v-if="canWrite" class="card">
       <h3>积分调整</h3>
       <div class="form-row">
         <div>

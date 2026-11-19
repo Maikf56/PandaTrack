@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { api, type ProviderRow } from '../api/client'
+import { api, can, type ProviderRow } from '../api/client'
 
 // Provider 与任务运维（03 §3.3）：只读观察 + 受控启停（理由必填 + 审计）。
+// RBAC：仅具备 providers:write 的角色可见启停按钮（后端权威校验）。
+const canToggle = can('providers:write')
 const providers = ref<ProviderRow[]>([])
 const tasks = ref<Record<string, unknown>[]>([])
 const loading = ref(true)
@@ -116,9 +118,10 @@ deriveTaskKeys()
               </td>
               <td>{{ p.last_success_at ? new Date(p.last_success_at).toLocaleString() : '—' }}</td>
               <td>
-                <button class="btn ghost sm" @click="openToggle(p)">
+                <button v-if="canToggle" class="btn ghost sm" @click="openToggle(p)">
                   {{ p.enabled ? '停用' : '启用' }}
                 </button>
+                <span v-else class="hint">—</span>
               </td>
             </tr>
           </tbody>

@@ -1,12 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { adminSession, api } from './api/client'
+import { adminSession, api, can, ROLE_LABELS } from './api/client'
 import pandaLogo from './assets/panda-logo.jpeg'
 
 const route = useRoute()
 const router = useRouter()
 const isLogin = computed(() => route.name === 'login')
+
+// 导航按角色过滤（03 §2 RBAC；后端为权威校验，这里只控可见性）
+const navItems = [
+  { to: '/', label: '客户管理', perm: 'customers:read' },
+  { to: '/billing', label: '账务操作', perm: 'billing:read' },
+  { to: '/providers', label: 'Provider 与任务', perm: 'providers:read' },
+  { to: '/audit', label: '审计日志', perm: 'audit:read' },
+]
+const visibleNav = computed(() =>
+  navItems.filter((it) => can(it.perm)),
+)
+const roleLabel = computed(() =>
+  ROLE_LABELS[adminSession.me?.role ?? ''] ?? adminSession.me?.role ?? '',
+)
 
 async function logout() {
   try {
@@ -31,14 +45,13 @@ async function logout() {
       </div>
       <p class="adm-badge">管理端</p>
       <nav>
-        <RouterLink to="/">客户管理</RouterLink>
-        <RouterLink to="/billing">账务操作</RouterLink>
-        <RouterLink to="/providers">Provider 与任务</RouterLink>
-        <RouterLink to="/audit">审计日志</RouterLink>
+        <RouterLink v-for="it in visibleNav" :key="it.to" :to="it.to">
+          {{ it.label }}
+        </RouterLink>
       </nav>
       <div class="adm-footer">
         <p v-if="adminSession.me" class="hint">
-          {{ adminSession.me.username }}（{{ adminSession.me.role }}）
+          {{ adminSession.me.username }}（{{ roleLabel }}）
         </p>
         <button class="btn ghost sm" @click="logout">退出登录</button>
       </div>

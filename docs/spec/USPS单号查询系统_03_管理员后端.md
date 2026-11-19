@@ -23,6 +23,8 @@
 
 使用角色与权限点组合，至少分为只读运营、客户支持、账务操作、Provider 运维、系统管理员。高风险操作要求二次确认并记录操作者、对象、理由、前后状态、关联 operation/job ID 和时间。生产管理员不得共用开发账号；管理员会话使用短时效和强认证配置。
 
+**落地（R9，2026-11-19）**：权威矩阵 `apps/api/src/api/authz.py`，5 角色 code 为 `readonly`（只读运营）/ `support`（客户支持）/ `finance`（账务操作）/ `provider_ops`（Provider 运维）/ `super_admin`（系统管理员）。权限点：`customers:read/write/delete`、`billing:read/write`、`providers:read/write`、`audit:read`。规则：fail-closed（未声明角色一律拒绝）；`customers:delete`（注销）仅 super_admin；路由用 `require_permission` 强制校验，admin 前端按同一矩阵控制菜单与按钮可见性（服务端仍为权威）。legacy `admin` 角色由迁移 b/0006 归一为 `super_admin` 并加 CHECK 约束。登录防爆破（R10）按两级 key（`ip|账号` / `*|账号`）计数，10 分钟窗口失败 ≥5 次指数锁定（30s→1h），持久化 `auth_throttle` 表。
+
 ### 3.2 客户和账务操作
 
 客户冻结/恢复通过业务服务写入；积分调整只能追加 `PointsLedger` 调整/冲正记录，不直接 patch 钱包余额。兑换码创建、导出、核销限制和失效均有审计轨迹。账务页面只读展示流水来源、reservation 和 operation 关联，人工处理通过受控命令/API执行。

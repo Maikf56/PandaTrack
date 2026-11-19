@@ -17,6 +17,7 @@ from pandatrack_common import codes
 from pandatrack_common.status import TERMINAL_STATUSES
 
 from api.errors import ApiProblem
+from api.throttle import next_lock_seconds
 
 
 def token_hash(token: str) -> str:
@@ -362,6 +363,96 @@ class BRepository:
             return None
         return {"admin_id": row[0], "public_id": str(row[1]),
                 "username": row[2], "role": row[3]}
+
+    # ---- 登录防爆破（09 §5.1；api.throttle 计算锁定时长）----
+
+    def login_throttle_locked_until(self, scope: str, key: str) -> datetime | None:
+        """未过期的锁定时刻；未锁或已过期返回 None。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT locked_until FROM auth_throttle
+                       WHERE scope=%s AND key=%s
+                         AND locked_until IS NOT NULL AND locked_until > now()""",
+                    (scope, key),
+                )
+                row = cur.fetchone()
+        return row[0] if row else None
+
+    def login_throttle_record_fail(self, scope: str, key: str, *,
+                                   window_seconds: int, max_attempts: int) -> int:
+        """记一次失败（窗口外重置计数），返回含本次的失败次数。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO auth_throttle (scope, key, fail_count,
+                                                 last_fail_at, updated_at)
+                       VALUES (%s, %s, 1, now(), now())
+                       ON CONFLICT (scope, key) DO UPDATE SET
+                         fail_count = CASE
+                           WHEN auth_throttle.last_fail_at
+                                < now() - make_interval(secs => %s) THEN 1
+                           ELSE auth_throttle.fail_count + 1 END,
+                         last_fail_at = now(), updated_at = now()
+                       RETURNING fail_count""",
+                    (scope, key, window_seconds),
+                )
+                fail_count: int = cur.fetchone()[0]
+                lock_seconds = next_lock_seconds(fail_count,
+                                                 max_attempts=max_attempts)
+                if lock_seconds > 0:
+                    cur.execute(
+                        """UPDATE auth_throttle
+                           SET locked_until = now() + make_interval(secs => %s)
+                           WHERE scope=%s AND key=%s""",
+                        (lock_seconds, scope, key),
+                    )
+                conn.commit()
+        return fail_count
+
+    def login_throttle_reset(self, scope: str, key: str) -> None:
+        """登录成功清零失败计数与锁定。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE auth_throttle
+                       SET fail_count=0, locked_until=NULL, updated_at=now()
+                       WHERE scope=%s AND key=%s""",
+                    (scope, key),
+                )
+                conn.commit()
+
+    # ---- 轨迹翻译缓存（api.translate 调用；Google v2 + digest 复用）----
+
+    def translation_cache_get(self, lang: str,
+                              digests: list[str]) -> dict[str, str]:
+        """批量取缓存：digest → 译文。"""
+        if not digests:
+            return {}
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT source_digest, translated FROM translation_cache
+                       WHERE lang=%s AND source_digest = ANY(%s)""",
+                    (lang, digests),
+                )
+                return {r[0]: r[1] for r in cur.fetchall()}
+
+    def translation_cache_put(self, lang: str,
+                              entries: list[tuple[str, str, str]]) -> None:
+        """批量写入缓存：[(digest, source_text, translated)]，幂等去重。"""
+        if not entries:
+            return
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO translation_cache
+                         (lang, source_digest, source_text, translated)
+                       VALUES (%s, %s, %s, %s)
+                       ON CONFLICT (lang, source_digest) DO NOTHING""",
+                    [(lang, d, s, t) for d, s, t in entries],
+                )
+                conn.commit()
 
     # ---- 客户/租户/席位（只读 + 状态变更）----
     def list_customers(self, *, tenant_id: int | None = None,

@@ -118,3 +118,27 @@ P5  08 CI/测试/部署/备份/监控（真实环境验收待 N1/N2）
 ## 5. 变更记录
 
 - 2026-11-19：初版，列出 A1–A2/B1/C1–C2/D1–D4/E1–E2 共 11 项缺陷与裁定；固化 3 项已确认决策；新增目录结构约定文档。
+
+---
+
+## 6. 实施期最终裁定（P8–P10，2026-11-19，全部已落地）
+
+| 编号 | 决策 | 理由与影响 |
+|---|---|---|
+| R1 | **前端目录保持 `apps/web`（客户端）+ `apps/admin`（管理端）**，不迁移到方案 04 增补的 `frontend/client` | apps/web 已部署、已接 CI、nginx root 固化；迁移目录纯属折腾。本裁定覆盖 04 的 frontend/client 增补 |
+| R2 | 生产形态 = **同机同域**：客户 `pandatrack.ginzavog.com` / 管理 `pandaadmin.ginzavog.com`，nginx TLS + `/api/` 反代 127.0.0.1:8100，systemd `pandatrack-api` | 00 §3.2 形态 A 落地；配置入库 `infra/nginx/pandatrack.conf` |
+| R3 | **一键部署**：`scripts/deploy.sh`（7 步：检查→pull→依赖→幂等迁移→前端构建发布→systemd→nginx→冒烟）+ `docs/DEPLOY.md` 新服务器初始化指南 | 服务器更新一律 `bash scripts/deploy.sh`；Python 依赖走 `requirements.txt`（monorepo flat-layout 不可 editable 安装） |
+| R4 | **测试卫生**：真库集成测试不得触发生产采集——consumer 增 `PT_ENQUEUE_SKIP_NUMBERS` 黑名单（命中不入队仍标记 processed）+ `tests/integration/_dbtest_cleanup.py` teardown 级联清 A 库 | worker 常驻后测试事件会被真实消费；端到端验证 skipped_env=1 零污染 |
+| R5 | 后端补齐：`POST /submissions/estimate`（只读预估不入账）、`POST /imports`（大批量受理）、`POST /admin/auth/whoami`（会话恢复） | 04 §5.4/§5.9、03 §3.1 缺口；`total_count` 口径 = Cleaner 全量候选数 |
+| R6 | 客户端设计系统按 04 §4.4 落地：中性灰阶 + 单强调色青绿 `#0F766E`、数据列等宽、8pt、两级阴影、120–200ms ease-out | SubmitView 提交页、检查更新防呆弹层、双状态图例、SSE 三态指示器、可见性感知轮询 |
+| R7 | 管理端五个页面：登录/客户/账务/Provider/审计；高风险操作理由必填+二次确认 | 03 全部路由已对接；权限矩阵见 R9 |
+| R8 | ClawBrowser 流量优化：clawctl 无原生禁图/禁视频配置；当前 USPS 跟踪页实测 ~180KB/次无大图风险；如需拦截走 `clawctl --cdp`（裸 CDP）实现 Network.setBlockedURLs | 计流量代理的防护预案，非当前必做 |
+
+| R9 | **RBAC 5 角色权限矩阵落地**（03 §2）：`super_admin` 系统管理员 / `finance` 账务 / `provider_ops` Provider 运维 / `support` 客户支持 / `readonly` 只读运营；权限点 customers:read/write/delete、billing:read/write、providers:read/write、audit:read | 权威矩阵 `apps/api/src/api/authz.py`（fail-closed，未知角色一律拒绝）；路由 `require_permission` 强制校验；admin 前端按角色过滤菜单/按钮（服务端仍为权威）；迁移 b/0006 归一 legacy `admin`→`super_admin` 并加 CHECK 约束；`customers:delete`（注销）仅 super_admin |
+| R10 | **登录防爆破**（09 §5.1）：customer/admin 两个登录端点加两级计数（`ip|账号` 单源 + `*|账号` 跨源撞库）；10 分钟窗口失败 ≥5 次锁定，30s 起指数翻倍封顶 1h；状态持久化 B 库 `auth_throttle`，重启不清零；锁定返回 429 + retry_after_seconds，不泄露账号存在性 | 纯算法 `api/throttle.py` + repo 持久化；nginx 前置下信任 X-Forwarded-For 首跳 |
+| R11 | **ResultsView 接入 SSE**：结果页 SSE 推送 → 800ms 防抖自动刷新；可见性感知轮询降级为断线兜底（SSE 在线时轮询自动跳过） | 修复 TrackingDetailView 轨迹时间字段不一致 bug（前端 `event_time` → 后端 `occurred_at`，此前时间列恒为空） |
+| R12 | **轨迹翻译（差异化增值）**：`GET /trackings?lang=` 与 `GET /trackings/{id}?lang=`；Google Translation v2 + B 库 `translation_cache` 按 (lang, sha256) 复用；状态标签走静态字典不过机翻 | 10 种目标语言；未配 `PT_TRANSLATE_API_KEY` 或调用失败一律优雅降级返回原文，不阻塞查询主链路；竞品对标：17TRACK 翻译收 1 配额、FrogTracking 无翻译功能——首版免费作为增值项，计费后续单独裁定 |
+
+### 变更记录（续）
+- 2026-11-19（晚）：P8 前端重构与管理端落地、P9 测试卫生（R4）、P10 一键部署（R1–R3/R8）三项裁定固化；双域名登录冒烟通过，B 库首个客户与管理员账号建立。
+- 2026-11-19（夜）：R9–R12 落地（RBAC 权限矩阵、登录防爆破、ResultsView 接 SSE、轨迹翻译接口）；368 项测试全绿。

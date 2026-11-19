@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
+from api.authz import P_BILLING_READ, P_BILLING_WRITE, require_permission
 from api.data import BRepository
 from api.deps import get_repo
 from api.routes.admin_auth import get_admin_subject
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/v1/admin/billing", tags=["admin-billing"])
 @router.post("/adjust")
 def adjust_points(customer_id: int, delta: int, description: str = "",
                   reason: str = "",
-                  admin=Depends(get_admin_subject),
+                  admin=Depends(require_permission(P_BILLING_WRITE)),
                   repo: BRepository = Depends(get_repo)):
     """积分调整：只追加 PointsLedger，不直接 patch 钱包余额绝对值。"""
     if delta == 0:
@@ -39,6 +40,6 @@ def adjust_points(customer_id: int, delta: int, description: str = "",
 
 @router.get("/ledger")
 def ledger(customer_id: int, limit: int = 100,
-           admin=Depends(get_admin_subject),
+           admin=Depends(require_permission(P_BILLING_READ)),
            repo: BRepository = Depends(get_repo)):
     return {"items": repo.ledger_entries(customer_id, limit=limit)}

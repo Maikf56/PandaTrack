@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, type CustomerRow } from '../api/client'
+import { api, can, type CustomerRow } from '../api/client'
 
 // 客户管理（03 §3.2）：状态变更（冻结/恢复）为高风险操作——弹窗写明理由后提交。
+// RBAC：仅具备 customers:write 的角色可见操作按钮（后端权威校验）。
+const canWrite = can('customers:write')
 const items = ref<CustomerRow[]>([])
 const total = ref(0)
 const loading = ref(true)
@@ -122,16 +124,19 @@ const statusLabelZh: Record<string, string> = {
           </td>
           <td>{{ row.created_at ? new Date(row.created_at).toLocaleString() : '—' }}</td>
           <td>
-            <button
-              v-if="row.status === 'active'"
-              class="btn ghost sm"
-              @click="openStatusDialog(row, 'suspended')"
-            >冻结</button>
-            <button
-              v-else-if="row.status === 'suspended'"
-              class="btn ghost sm"
-              @click="openStatusDialog(row, 'active')"
-            >恢复</button>
+            <template v-if="canWrite">
+              <button
+                v-if="row.status === 'active'"
+                class="btn ghost sm"
+                @click="openStatusDialog(row, 'suspended')"
+              >冻结</button>
+              <button
+                v-else-if="row.status === 'suspended'"
+                class="btn ghost sm"
+                @click="openStatusDialog(row, 'active')"
+              >恢复</button>
+            </template>
+            <span v-else class="hint">—</span>
           </td>
         </tr>
       </tbody>

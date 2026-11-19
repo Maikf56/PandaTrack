@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { api, type TrackingView, type CheckUpdateResult } from '../api/client'
 import { loadStatusDict, session, statusLabel } from '../composables/session'
-import { visibilityPolling, createChangeTracker } from '../composables/sse'
+import { useSse, visibilityPolling, createChangeTracker } from '../composables/sse'
 
 // 结果列表（04 §5.6/§8.2，G2 流程 3）：筛选 + 检查更新防呆 + 变化感知。
 const items = ref<TrackingView[]>([])
@@ -23,12 +23,30 @@ const tracker = createChangeTracker()
 const changeSummary = ref(0)
 const stopPolling = visibilityPolling(reload, 15000)
 
+// 实时通道（§8.2）：SSE 推送 → 800ms 防抖自动刷新；轮询为断线兜底
+// （结果页是等待场景，自动更新优于手动提示；SSE 在线时轮询自动跳过）
+const { hasUpdate, open, close } = useSse()
+let reloadTimer: ReturnType<typeof setTimeout> | null = null
+watch(hasUpdate, (v) => {
+  if (!v) return
+  if (reloadTimer) clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(() => {
+    hasUpdate.value = false
+    void reload()
+  }, 800)
+})
+
 onMounted(async () => {
+  open()
   await loadStatusDict()
   await reload()
 })
 
-onUnmounted(() => stopPolling())
+onUnmounted(() => {
+  stopPolling()
+  close()
+  if (reloadTimer) clearTimeout(reloadTimer)
+})
 
 async function reload() {
   loading.value = items.value.length === 0

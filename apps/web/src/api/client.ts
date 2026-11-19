@@ -92,8 +92,9 @@ export interface TrackingEvent {
   label_zh: string
   description: string | null
   time_confidence: string | null
-  event_time?: string
-  location?: string
+  occurred_at?: string | null
+  location?: string | null
+  event_code?: string | null
 }
 
 export interface TrackingView {

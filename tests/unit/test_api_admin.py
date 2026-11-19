@@ -18,7 +18,7 @@ from api.errors import ApiProblem  # noqa: E402
 from pandatrack_common import codes  # noqa: E402
 
 ADMIN_SUB = {"admin_id": 10, "public_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-             "username": "admin1", "role": "admin"}
+             "username": "admin1", "role": "super_admin"}  # b/0006 已归一 legacy admin
 
 
 def client_with(repo):
@@ -30,6 +30,8 @@ def client_with(repo):
 def authed_client(repo):
     c = client_with(repo)
     c.cookies.set("pt_admin_session", "valid-token")
+    # RBAC 后依赖需要真实角色字典；默认 super_admin（全权限）
+    repo.resolve_admin_session.return_value = ADMIN_SUB
     return c
 
 
@@ -115,7 +117,7 @@ class TestAdminBilling:
         repo.admin_adjust_points.assert_called_once_with(
             customer_id=1, delta=50,
             description="测试调整 | admin",
-            actor_id=10, actor_role="admin")
+            actor_id=10, actor_role="super_admin")
 
     def test_adjust_zero_rejected(self):
         c = authed_client(MagicMock())

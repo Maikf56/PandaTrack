@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
+from api.authz import P_AUDIT_READ, require_permission
 from api.data import BRepository
 from api.deps import get_repo
-from api.routes.admin_auth import get_admin_subject
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-audit"])
 
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin-audit"])
 @router.get("/audit")
 def audit_log(limit: int = 100, offset: int = 0, actor_id: int | None = None,
               action: str | None = None,
-              admin=Depends(get_admin_subject),
+              admin=Depends(require_permission(P_AUDIT_READ)),
               repo: BRepository = Depends(get_repo)):
     rows, total = repo.audit_log(limit=limit, offset=offset,
                                  actor_id=actor_id, action=action)

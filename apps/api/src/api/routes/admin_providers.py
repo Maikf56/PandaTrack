@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from api.authz import P_PROVIDERS_READ, P_PROVIDERS_WRITE, require_permission
 from api.data import BRepository
 from api.deps import get_repo
-from api.routes.admin_auth import get_admin_subject
 from api.errors import ApiProblem
 from pandatrack_common import codes
 
@@ -13,14 +13,14 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin-providers"])
 
 
 @router.get("/providers")
-def list_providers(admin=Depends(get_admin_subject),
+def list_providers(admin=Depends(require_permission(P_PROVIDERS_READ)),
                    repo: BRepository = Depends(get_repo)):
     return {"items": repo.provider_health()}
 
 
 @router.post("/providers/{provider_code}/toggle")
 def toggle_provider(provider_code: str, enabled: bool, reason: str = "",
-                    admin=Depends(get_admin_subject),
+                    admin=Depends(require_permission(P_PROVIDERS_WRITE)),
                     repo: BRepository = Depends(get_repo)):
     # 03 §3.3：Provider 启停仅允许对已验收配置操作；此处只改状态并强制审计。
     ok = repo.toggle_provider(provider_code, enabled)
@@ -35,6 +35,6 @@ def toggle_provider(provider_code: str, enabled: bool, reason: str = "",
 
 
 @router.get("/tasks")
-def queue_snapshot(admin=Depends(get_admin_subject),
+def queue_snapshot(admin=Depends(require_permission(P_PROVIDERS_READ)),
                    repo: BRepository = Depends(get_repo)):
     return repo.queue_snapshot()

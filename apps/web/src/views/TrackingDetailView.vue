@@ -12,29 +12,49 @@ const error = ref('')
 const checkFeedback = ref('')
 const checking = ref(false)
 
+// 轨迹翻译（04 §6 增值项）：lang 切换后带参重新拉取；服务端缓存降级安全
+const LANGS = [
+  { code: '', label: '原文 / 中文' },
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Español' },
+  { code: 'pt', label: 'Português' },
+  { code: 'ru', label: 'Русский' },
+  { code: 'ar', label: 'العربية' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+  { code: 'vi', label: 'Tiếng Việt' },
+  { code: 'th', label: 'ไทย' },
+]
+const lang = ref('')
+const translating = ref(false)
+
 onMounted(async () => {
   await loadStatusDict()
   await reload()
 })
 
 async function reload() {
-  loading.value = true
+  translating.value = lang.value !== ''
+  loading.value = item.value === null
   error.value = ''
   try {
     const id = String(route.params.id)
-    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${id}`)
+    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${id}`, {
+      lang: lang.value || undefined,
+    })
     item.value = data
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
     loading.value = false
+    translating.value = false
   }
 }
 
 const eventsDesc = computed(() => {
   if (!item.value) return []
   const evs = [...(item.value.events ?? [])]
-  evs.sort((a, b) => (b.event_time ?? '').localeCompare(a.event_time ?? ''))
+  evs.sort((a, b) => (b.occurred_at ?? '').localeCompare(a.occurred_at ?? ''))
   return evs
 })
 
@@ -88,8 +108,18 @@ function fmtTime(t?: string | null): string {
             {{ checking ? '提交检查中…' : '检查更新' }}
           </button>
           <RouterLink class="btn ghost" to="/results">返回结果列表</RouterLink>
+          <label class="lang-wrap" for="lang-select">
+            轨迹语言
+            <select id="lang-select" v-model="lang" :disabled="translating"
+                    @change="reload">
+              <option v-for="l in LANGS" :key="l.code" :value="l.code">
+                {{ l.label }}
+              </option>
+            </select>
+          </label>
         </div>
         <p v-if="checkFeedback" class="ok-box" role="status">{{ checkFeedback }}</p>
+        <p v-if="translating" class="hint" role="status">正在翻译轨迹…</p>
         <p v-if="item.last_success_at" class="hint">
           最近有效更新：{{ fmtTime(item.last_success_at) }}
           <template v-if="item.next_sync_at">
@@ -108,7 +138,7 @@ function fmtTime(t?: string | null): string {
           <li v-for="(ev, i) in eventsDesc" :key="i">
             <div class="ev-head">
               <span class="badge">{{ ev.label_zh || statusLabel(ev.status_key) }}</span>
-              <span class="ev-time">{{ fmtTime(ev.event_time) }}</span>
+              <span class="ev-time">{{ fmtTime(ev.occurred_at) }}</span>
             </div>
             <p v-if="ev.description" class="ev-desc">{{ ev.description }}</p>
             <p v-if="ev.location" class="hint">{{ ev.location }}</p>
@@ -127,7 +157,9 @@ function fmtTime(t?: string | null): string {
 </template>
 
 <style scoped>
-.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.lang-wrap { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--fg-soft); margin-left: auto; }
+.lang-wrap select { width: auto; }
 .sim-flag { font-weight: 700; }
 .timeline { list-style: none; padding: 0; margin: 0; }
 .timeline li { padding: 12px 0; border-bottom: 1px solid var(--line); }

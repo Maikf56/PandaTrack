@@ -110,3 +110,44 @@ export interface LedgerRow {
   description: string | null
   created_at: string
 }
+
+// ---- RBAC（03 §2：与后端 apps/api/src/api/authz.py 矩阵同源；前端仅控可见性，
+//      权限校验以服务端为准——直接调 API 仍会被 403 拒绝）----
+
+export const ROLE_PERMISSIONS: Record<string, string[]> = {
+  super_admin: [
+    'customers:read', 'customers:write', 'customers:delete',
+    'billing:read', 'billing:write',
+    'providers:read', 'providers:write',
+    'audit:read',
+  ],
+  finance: [
+    'customers:read', 'billing:read', 'billing:write',
+    'providers:read', 'audit:read',
+  ],
+  provider_ops: [
+    'customers:read', 'billing:read',
+    'providers:read', 'providers:write',
+    'audit:read',
+  ],
+  support: [
+    'customers:read', 'customers:write',
+    'billing:read', 'providers:read', 'audit:read',
+  ],
+  readonly: [
+    'customers:read', 'billing:read', 'providers:read', 'audit:read',
+  ],
+}
+
+export const ROLE_LABELS: Record<string, string> = {
+  super_admin: '系统管理员',
+  finance: '账务操作',
+  provider_ops: 'Provider 运维',
+  support: '客户支持',
+  readonly: '只读运营',
+}
+
+export function can(permission: string): boolean {
+  const role = adminSession.me?.role ?? ''
+  return (ROLE_PERMISSIONS[role] ?? []).includes(permission)
+}
