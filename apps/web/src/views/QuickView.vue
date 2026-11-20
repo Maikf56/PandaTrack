@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, type SubmissionAccepted, type TrackingView } from '../api/client'
-import { loadSession, loadStatusDict, lang } from '../composables/session'
+import { loadSession, loadStatusDict } from '../composables/session'
 import { t } from '../i18n'
 import { splitDraft, requestIdFor, clearRequestId, MAX_LINES } from '../logic/draft'
 import StatusDistBar from '../components/StatusDistBar.vue'
@@ -37,7 +37,6 @@ onMounted(async () => {
 })
 
 onUnmounted(stopPolling)
-watch(lang, () => { if (accepted.value) void loadResults() })
 
 function clearAll() {
   text.value = ''
@@ -74,9 +73,7 @@ async function submit() {
 async function loadResults() {
   if (!accepted.value) return
   try {
-    const { data } = await api.get<TrackingView[]>('/api/v1/trackings', {
-      lang: lang.value || undefined,
-    })
+    const { data } = await api.get<TrackingView[]>('/api/v1/trackings')
     items.value = data.filter((it) => it.batch_id === accepted.value!.operation_id)
     pollFatal.value = false
   } catch {

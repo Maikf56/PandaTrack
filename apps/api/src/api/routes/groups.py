@@ -186,9 +186,13 @@ def create_import(payload: ImportCreate,
             conn.rollback()
             raise ApiProblem(codes.INTERNAL_ERROR)
 
-    # 受理后自动挂默认组（后置事务，失败不回滚受理，04 §5.8）
+    # P17：目标组生效（与 submissions 同语义）——后置事务，失败不回滚受理
     try:
-        gid = repo.ensure_default_group(subject.customer_id)
+        if payload.target_group_name:
+            gid = repo.resolve_group_by_name(
+                subject.customer_id, payload.target_group_name)
+        else:
+            gid = repo.ensure_default_group(subject.customer_id)
         repo.assign_operation_group(subject.customer_id,
                                     outcome.operation_public_id, gid)
     except Exception:

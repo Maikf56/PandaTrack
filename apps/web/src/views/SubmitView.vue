@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, type SubmissionAccepted, type SubmissionEstimate, type ImportAccepted, type GroupView } from '../api/client'
 import { loadSession, loadStatusDict } from '../composables/session'
 import { t } from '../i18n'
@@ -7,6 +8,8 @@ import { splitDraft, requestIdFor, clearRequestId } from '../logic/draft'
 
 // 提交单号（04 §5.4，G2 流程 1）：两步「输入与规则说明 → 受理结果」。
 // 无预览/报价步骤；实时解析面板是输入辅助，最终以 202 受理结果为唯一权威。
+// P17：受理成功后直接跳转「我的查询」第三级批次页（客户要的是结果）。
+const router = useRouter()
 const text = ref('')
 const fileName = ref<string | null>(null)
 const submitting = ref(false)
@@ -139,6 +142,7 @@ async function doSubmit() {
   const lines = draft.value.lines
   const group = selectedGroup.value
   try {
+    let opId: string | undefined
     if (isBatch.value) {
       const { data } = await api.post<ImportAccepted>('/api/v1/imports', {
         file_name: fileName.value,
@@ -148,6 +152,7 @@ async function doSubmit() {
       })
       acceptedKind.value = 'import'
       accepted.value = data
+      opId = (data as { operation_id?: string }).operation_id
     } else {
       const { data } = await api.post<SubmissionAccepted>('/api/v1/submissions', {
         source: 'paste',
@@ -157,9 +162,15 @@ async function doSubmit() {
       })
       acceptedKind.value = 'paste'
       accepted.value = data
+      opId = (data as { operation_id?: string }).operation_id
     }
     clearRequestId() // 已产生操作，后续新提交用新键
     await loadSession(true) // 余额以服务端刷新为准
+    // P17：受理成功直接进第三级批次页（结果导向，不再停留成功卡）
+    if (opId) {
+      await router.replace(`/results/batch/${opId}`)
+      return
+    }
   } catch (e) {
     error.value = (e as { message: string }).message
     // 保留输入内容（04 §7.4）；幂等键已存，重试自动复用

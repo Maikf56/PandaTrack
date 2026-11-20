@@ -102,7 +102,8 @@ export interface OperationProgress {
 export interface TrackingEvent {
   status_key: string
   label_zh: string
-  description: string | null
+  description: string | null          // 英文原文（P17 竞品式默认直出）
+  description_zh?: string | null      // 词典中文（USPS 短语映射；「翻译」切换）
   time_confidence: string | null
   occurred_at?: string | null
   location?: string | null

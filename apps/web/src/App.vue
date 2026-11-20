@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { loadSession, session, clearSession, lang, setLang } from './composables/session'
 import { connState, useSse } from './composables/sse'
 import { t, locale, toggleLocale } from './i18n'
-import pandaLogo from './assets/panda-logo.jpeg'
+import pandaLogo from './assets/panda-logo-full.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -176,7 +176,7 @@ body {
   display: inline-flex; align-items: center; gap: 10px;
   text-decoration: none; color: var(--fg);
 }
-.brand-logo { width: 132px; height: auto; display: block; }
+.brand-logo { width: 156px; height: auto; display: block; }
 .linklike { background: none; border: none; color: var(--fg-soft); cursor: pointer; font: inherit; padding: 0; }
 a { color: var(--brand); }
 

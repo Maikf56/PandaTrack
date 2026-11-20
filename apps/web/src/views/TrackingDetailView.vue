@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type TrackingView, type CheckUpdateResult } from '../api/client'
-import { loadStatusDict, statusLabel, lang, setLang } from '../composables/session'
+import { loadStatusDict, statusLabel } from '../composables/session'
 import { t } from '../i18n'
 
 // 单号详情（04 §5.7）：摘要卡 + 完整轨迹时间线；最新事件在上。
@@ -13,14 +13,52 @@ const error = ref('')
 const checkFeedback = ref('')
 const checking = ref(false)
 
-// 轨迹翻译（04 §6 增值项；R12 修订）：语言收敛为 en↔zh，用全局 lang
-// （session.ts 'pt_lang'，与临时快查/结果列表共享）；切换后带参重新拉取，
-// 服务端 LibreTranslate/缓存降级安全。
-const LANGS = computed(() => [
-  { code: '', label: t('track.lang_orig') },
-  { code: 'zh', label: t('track.lang_zh') },
-])
+// 轨迹翻译（P17 竞品式）：默认英文原文直出，右上「翻译」切中文
+// （USPS 词典优先、机翻兜底），「显示原文」切回；原文永不覆盖。
+const translated = ref(false)
 const translating = ref(false)
+const fallbackZh = ref<Map<string, string>>(new Map())
+
+const hasDictZh = computed(() =>
+  eventsDesc.value.some((e) => e.description_zh || fallbackZh.value.get(e.description || '')))
+
+function titleOf(e: TrackingView['events'][number]): string {
+  if (!translated.value) return e.description || e.label_zh || statusLabel(e.status_key)
+  return e.description_zh || fallbackZh.value.get(e.description || '')
+    || e.description || e.label_zh || statusLabel(e.status_key)
+}
+
+function subOf(e: TrackingView['events'][number]): string {
+  if (!translated.value) return ''
+  const zh = e.description_zh || fallbackZh.value.get(e.description || '') || ''
+  return zh && zh !== e.description ? (e.description || '') : ''
+}
+
+async function toggleTranslate() {
+  if (translated.value) {
+    translated.value = false
+    return
+  }
+  if (hasDictZh.value) {
+    translated.value = true
+    return
+  }
+  translating.value = true
+  try {
+    const id = String(route.params.id)
+    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${id}`, { lang: 'zh' })
+    const m = new Map<string, string>()
+    for (const e of data.events ?? []) {
+      if (e.description_zh) m.set(e.description || '', e.description_zh)
+    }
+    fallbackZh.value = m
+    translated.value = m.size > 0
+  } catch {
+    translated.value = true
+  } finally {
+    translating.value = false
+  }
+}
 
 onMounted(async () => {
   await loadStatusDict()
@@ -28,20 +66,17 @@ onMounted(async () => {
 })
 
 async function reload() {
-  translating.value = lang.value !== ''
   loading.value = item.value === null
   error.value = ''
   try {
     const id = String(route.params.id)
-    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${id}`, {
-      lang: lang.value || undefined,
-    })
+    // 原文请求（lang 留空）：事件同时带英文原文与词典中文，前端本地切换
+    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${id}`)
     item.value = data
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
     loading.value = false
-    translating.value = false
   }
 }
 
@@ -102,18 +137,9 @@ function fmtTime(s?: string | null): string {
             {{ checking ? t('common.checking') : t('common.check_update') }}
           </button>
           <RouterLink class="btn ghost" to="/results">{{ t('track.back_results') }}</RouterLink>
-          <label class="lang-wrap" for="lang-select">
-            {{ t('track.lang') }}
-            <select id="lang-select" :value="lang" :disabled="translating"
-                    @change="setLang(($event.target as HTMLSelectElement).value); reload()">
-              <option v-for="l in LANGS" :key="l.code" :value="l.code">
-                {{ l.label }}
-              </option>
-            </select>
-          </label>
         </div>
         <p v-if="checkFeedback" class="ok-box" role="status">{{ checkFeedback }}</p>
-        <p v-if="translating" class="hint" role="status">{{ t('track.translating') }}</p>
+        <p v-if="translating" class="hint" role="status">{{ t('card.translating') }}</p>
         <p v-if="item.last_success_at" class="hint">
           {{ t('track.last_success', { time: fmtTime(item.last_success_at) }) }}
           <template v-if="item.next_sync_at">
@@ -124,7 +150,14 @@ function fmtTime(s?: string | null): string {
       </div>
 
       <div class="card">
-        <h3>{{ t('track.timeline_title') }}</h3>
+        <div class="tl-head">
+          <h3>{{ t('track.timeline_title') }}</h3>
+          <button class="linklike tr-toggle" :disabled="translating" @click="toggleTranslate">
+            {{ translating
+              ? t('card.translating')
+              : (translated ? t('card.show_original') : t('card.translate')) }}
+          </button>
+        </div>
         <p v-if="eventsDesc.length === 0" class="hint" role="status">
           {{ t('track.no_events') }}
         </p>
@@ -134,7 +167,8 @@ function fmtTime(s?: string | null): string {
               <span class="badge">{{ ev.label_zh || statusLabel(ev.status_key) }}</span>
               <span class="ev-time">{{ fmtTime(ev.occurred_at) }}</span>
             </div>
-            <p v-if="ev.description" class="ev-desc">{{ ev.description }}</p>
+            <p class="ev-desc">{{ titleOf(ev) }}</p>
+            <p v-if="subOf(ev)" class="ev-sub">{{ subOf(ev) }}</p>
             <p v-if="ev.location" class="hint">{{ ev.location }}</p>
             <p
               v-if="ev.time_confidence && ev.time_confidence !== 'exact'"
@@ -152,14 +186,16 @@ function fmtTime(s?: string | null): string {
 
 <style scoped>
 .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.lang-wrap { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--fg-soft); margin-left: auto; }
-.lang-wrap select { width: auto; }
+.tl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tr-toggle { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--brand); cursor: pointer; font-weight: 600; }
+.tr-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 .sim-flag { font-weight: 700; }
 .timeline { list-style: none; padding: 0; margin: 0; }
 .timeline li { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .timeline li:last-child { border-bottom: none; }
 .ev-head { display: flex; gap: 12px; align-items: center; }
 .ev-time { color: var(--fg-soft); font-size: 13px; }
-.ev-desc { margin: 6px 0 0; }
+.ev-desc { margin: 6px 0 0; font-weight: 600; }
+.ev-sub { margin: 1px 0 0; color: var(--fg-soft); font-size: 12.5px; }
 .conf { font-style: italic; }
 </style>

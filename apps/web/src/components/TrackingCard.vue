@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { api, type TrackingView } from '../api/client'
+import { api, type TrackingEvent, type TrackingView } from '../api/client'
 import { statusLabel } from '../composables/session'
 import { t } from '../i18n'
 
-// 可展开单号卡（P15 三级页面第三层，对齐竞品）：
-// 收起=单号+状态+最新事件；展开=完整轨迹时间线+统计行+检查更新。
+// 可展开单号卡（P15 三级页面第三层；P17 竞品化重构）：
+// 收起=单号+USPS+最新事件摘要+状态徽标；展开=轨迹时间线+统计行。
+// 竞品式双语（P17）：默认英文原文直出，右上「翻译」切中文（词典优先，
+// 机翻兜底），「显示原文」一键切回——原文永不丢失。
 const props = defineProps<{
   item: TrackingView
   flash?: boolean
@@ -15,6 +17,10 @@ const props = defineProps<{
 const open = ref(false)
 const checking = ref(false)
 const feedback = ref('')
+const translated = ref(false)
+const translating = ref(false)
+// 机翻兜底缓存：description → zh（词典命中的不走这里）
+const fallbackZh = ref<Map<string, string>>(new Map())
 
 const events = computed(() => {
   const evs = [...(props.item.events ?? [])]
@@ -23,16 +29,66 @@ const events = computed(() => {
 })
 const latest = computed(() => events.value[0])
 
+/** 词条标题：翻译态取词典/机翻中文，原文态取英文 description。 */
+function titleOf(ev: TrackingEvent): string {
+  if (!translated.value) return ev.description || ev.label_zh || statusLabel(ev.status_key)
+  return ev.description_zh || fallbackZh.value.get(ev.description || '')
+    || ev.description || ev.label_zh || statusLabel(ev.status_key)
+}
+
+/** 翻译态下标题下的灰色原文副行（与中文不同才显示）。 */
+function subOf(ev: TrackingEvent): string {
+  if (!translated.value) return ''
+  const zh = ev.description_zh || fallbackZh.value.get(ev.description || '') || ''
+  return zh && zh !== ev.description ? (ev.description || '') : ''
+}
+
+const hasDictZh = computed(() =>
+  events.value.some((e) => e.description_zh || fallbackZh.value.get(e.description || '')))
+
+async function toggleTranslate() {
+  if (translated.value) {
+    translated.value = false
+    return
+  }
+  if (hasDictZh.value) {
+    translated.value = true
+    return
+  }
+  // 词典未覆盖：请求服务端机翻兜底（单号详情接口，失败回退原文）
+  translating.value = true
+  try {
+    const { data } = await api.get<TrackingView>(`/api/v1/trackings/${props.item.id}`, {
+      lang: 'zh',
+    })
+    const m = new Map<string, string>()
+    for (const e of data.events ?? []) {
+      if (e.description_zh) m.set(e.description || '', e.description_zh)
+    }
+    fallbackZh.value = m
+    translated.value = m.size > 0
+  } catch {
+    translated.value = true // 请求失败也切标题（词典/原文兜底）
+  } finally {
+    translating.value = false
+  }
+}
+
 function fmtTime(s?: string | null): string {
   if (!s) return '—'
   const d = new Date(s)
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function fmtShort(s?: string | null): string {
+/** 竞品式相对时间：N 分钟/小时/天前。 */
+function fmtRel(s?: string | null): string {
   if (!s) return ''
-  const d = new Date(s)
-  return `${d.getMonth() + 1}/${d.getDate()}`
+  const diff = Date.now() - new Date(s).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return t('card.rel_min', { n: Math.max(mins, 1) })
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return t('card.rel_hour', { n: hours })
+  return t('card.rel_day', { n: Math.floor(hours / 24) })
 }
 
 async function checkUpdate() {
@@ -59,14 +115,19 @@ async function copyNumber() {
 
 <template>
   <div class="tcard" :class="{ flash, open }">
+    <!-- 收起头：单号 + USPS + 摘要 + 状态徽标（竞品式，徽标靠右） -->
     <button class="tcard-head" :aria-expanded="open" @click="open = !open">
       <span class="caret" aria-hidden="true">▸</span>
       <span class="mono num">{{ item.normalized_number }}</span>
+      <span class="carrier" aria-hidden="true">USPS</span>
+      <span class="desc">
+        <span v-if="latest" class="desc-ico" aria-hidden="true">⏱</span>
+        {{ latest?.description || latest?.label_zh || t('card.no_events') }}
+        <span v-if="latest" class="hint rel">{{ fmtRel(latest.occurred_at) }}</span>
+      </span>
       <span class="badge" :class="{ terminal: item.is_terminal }">
         {{ item.label_zh || statusLabel(item.status_key) }}
       </span>
-      <span class="desc">{{ latest?.description || latest?.label_zh || t('card.no_events') }}</span>
-      <span class="hint time">{{ fmtShort(latest?.occurred_at) }}</span>
     </button>
 
     <div v-if="open" class="tcard-body">
@@ -77,6 +138,15 @@ async function copyNumber() {
           {{ checking ? t('card.checking') : t('common.check_update') }}
         </button>
         <RouterLink class="linklike" :to="`/results/${item.id}`">{{ t('card.detail_page') }}</RouterLink>
+        <button
+          class="linklike tr-toggle"
+          :disabled="translating"
+          @click="toggleTranslate"
+        >
+          {{ translating
+            ? t('card.translating')
+            : (translated ? t('card.show_original') : t('card.translate')) }}
+        </button>
       </div>
       <p v-if="feedback" class="hint fb" role="status">{{ feedback }}</p>
 
@@ -89,8 +159,12 @@ async function copyNumber() {
           <li v-for="(ev, i) in events" :key="i" :class="{ first: i === 0 }">
             <span class="node" aria-hidden="true"></span>
             <div class="ev">
-              <p class="ev-title">{{ ev.description || ev.label_zh || statusLabel(ev.status_key) }}</p>
-              <p class="hint">{{ ev.location || '' }} · {{ fmtTime(ev.occurred_at) }}</p>
+              <p class="ev-title">{{ titleOf(ev) }}</p>
+              <p v-if="subOf(ev)" class="ev-sub">{{ subOf(ev) }}</p>
+              <p class="hint">
+                <span v-if="ev.location" class="loc">◎ {{ ev.location }}</span>
+                {{ ev.location ? '·' : '' }} {{ fmtTime(ev.occurred_at) }}
+              </p>
             </div>
           </li>
         </ol>
@@ -125,14 +199,21 @@ async function copyNumber() {
 }
 .caret { color: var(--fg-soft); transition: transform 140ms ease-out; flex: none; }
 .open .caret { transform: rotate(90deg); }
-.num { font-size: 14px; flex: none; }
+.num { font-size: 14px; font-weight: 700; flex: none; }
+.carrier {
+  flex: none; font-size: 11px; font-weight: 700; color: var(--fg-soft);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
+  letter-spacing: 0.5px;
+}
 .desc {
   flex: 1; min-width: 0; color: var(--fg-soft); font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.time { flex: none; }
+.desc-ico { margin-right: 2px; }
+.rel { margin-left: 6px; }
 .tcard-body { border-top: 1px solid var(--line); padding: 12px 16px 16px; }
 .body-toolbar { display: flex; gap: 16px; align-items: center; }
+.tr-toggle { margin-left: auto; font-weight: 600; }
 .linklike { color: var(--brand); text-decoration: none; cursor: pointer; font-size: 13px; }
 button.linklike { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--brand); }
 button.linklike:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -151,8 +232,10 @@ button.linklike:disabled { opacity: 0.5; cursor: not-allowed; }
   border-radius: 999px; background: var(--line);
 }
 .timeline li.first .node { background: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
-.ev-title { margin: 0; font-weight: 500; }
+.ev-title { margin: 0; font-weight: 600; }
+.ev-sub { margin: 1px 0 0; color: var(--fg-soft); font-size: 12.5px; }
 .ev p.hint { margin: 2px 0 0; }
+.loc { color: var(--fg-soft); }
 .stats {
   display: flex; gap: 32px; flex-wrap: wrap; margin-top: 6px;
   padding-top: 12px; border-top: 1px solid var(--line);
@@ -162,5 +245,6 @@ button.linklike:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (max-width: 640px) {
   .tcard-head { flex-wrap: wrap; }
   .desc { width: 100%; }
+  .tr-toggle { margin-left: 0; }
 }
 </style>

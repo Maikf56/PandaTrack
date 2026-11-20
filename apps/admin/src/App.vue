@@ -15,6 +15,7 @@ const navItems = [
   { to: '/customers', label: '客户管理', perm: 'customers:read' },
   { to: '/billing', label: '账务操作', perm: 'billing:read' },
   { to: '/providers', label: 'Provider 与任务', perm: 'providers:read' },
+  { to: '/runlog', label: '系统运行日志', perm: 'audit:read' },
   { to: '/audit', label: '审计日志', perm: 'audit:read' },
 ]
 const visibleNav = computed(() =>

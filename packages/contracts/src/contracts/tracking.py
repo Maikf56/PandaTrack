@@ -21,7 +21,8 @@ class TrackingEventView(BaseModel):
     time_confidence: str = "low"         # exact | low（闸门 6：只能是这两种）
     status_key: str                      # 12 态标准状态
     label_zh: str                        # 服务端白话标签
-    description: str                     # 事件描述（原始/中文，由投影层定）
+    description: str                     # 事件描述（英文原文，竞品式默认直出）
+    description_zh: str | None = None    # 词典中文（USPS 短语映射；机翻兜底，可为 None）
     location: str | None = None
     event_code: str | None = None
 

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type BatchView, type TrackingView, type CheckUpdateResult } from '../api/client'
-import { loadStatusDict, session, lang } from '../composables/session'
+import { loadStatusDict, session } from '../composables/session'
 import { t } from '../i18n'
 import { hasUpdate, visibilityPolling, createChangeTracker } from '../composables/sse'
 import StatusDistBar from '../components/StatusDistBar.vue'
@@ -34,7 +34,7 @@ onMounted(async () => {
 })
 onUnmounted(() => { stopPolling(); if (reloadTimer) clearTimeout(reloadTimer) })
 
-watch([batchId, lang], () => { void reload() })
+watch(batchId, () => { void reload() })
 
 async function reload() {
   loading.value = items.value.length === 0
@@ -42,7 +42,8 @@ async function reload() {
   try {
     const [bs, ts] = await Promise.all([
       api.get<BatchView[]>('/api/v1/batches', { limit: 100 }),
-      api.get<TrackingView[]>('/api/v1/trackings', { lang: lang.value || undefined }),
+      // P17：原文直出（事件含英文原文+词典中文），翻译由卡片本地切换
+      api.get<TrackingView[]>('/api/v1/trackings'),
     ])
     batch.value = bs.data.find((b) => b.id === batchId.value) ?? null
     // batch_id = 提交操作 public_id（list_trackings LATERAL 最近一次提交）。
@@ -64,6 +65,18 @@ const filtered = computed(() =>
     return true
   }),
 )
+
+// P17 分页器（竞品式）：筛选后分页展示，页码/跳页
+const PAGE_SIZE = 20
+const page = ref(1)
+const pageInput = ref('')
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
+const paged = computed(() =>
+  filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+watch([search, filterStatus, batchId], () => { page.value = 1 })
+function gotoPage(p: number) {
+  page.value = Math.min(Math.max(1, p), totalPages.value)
+}
 
 const dist = computed(() => {
   const d: Record<string, number> = {}
@@ -171,11 +184,33 @@ async function exportBatch() {
 
       <div v-else class="cards">
         <TrackingCard
-          v-for="it in filtered"
+          v-for="it in paged"
           :key="it.id"
           :item="it"
           :flash="tracker.changedIds.value.has(it.id)"
         />
+        <!-- P17 分页器（竞品式） -->
+        <div v-if="filtered.length > PAGE_SIZE" class="pager" role="navigation">
+          <span class="hint">{{ t('bt.pager_total', { n: filtered.length }) }}</span>
+          <label>
+            {{ t('bt.pager_per') }}
+            <span class="mono">20</span>
+          </label>
+          <span class="hint">≈</span>
+          <button class="pg-btn" :disabled="page <= 1" @click="gotoPage(page - 1)">‹</button>
+          <span class="pg-now">{{ page }} / {{ totalPages }}</span>
+          <button class="pg-btn" :disabled="page >= totalPages" @click="gotoPage(page + 1)">›</button>
+          <span class="hint">{{ t('bt.pager_jump') }}</span>
+          <input
+            v-model="pageInput"
+            class="pg-input mono"
+            type="number"
+            min="1"
+            :max="totalPages"
+            @keydown.enter="gotoPage(Number(pageInput) || 1); pageInput = ''"
+          />
+          <span class="hint">{{ t('bt.pager_page') }}</span>
+        </div>
         <p class="hint scope-note">
           {{ t('bt.scope_note') }}
         </p>
@@ -194,4 +229,18 @@ async function exportBatch() {
 .filters input, .filters select { width: auto; min-width: 200px; }
 .cards { margin-top: 8px; }
 .scope-note { margin-top: 4px; }
+.pager {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 4px 4px; border-top: 1px solid var(--line); margin-top: 8px;
+}
+.pager label { font-size: 13px; color: var(--fg-soft); display: inline-flex; gap: 4px; align-items: center; }
+.pg-btn {
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  border-radius: var(--radius-ctl); width: 30px; height: 30px; cursor: pointer;
+  font: inherit; line-height: 1;
+}
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pg-now { font-size: 14px; font-weight: 600; }
+.pg-input { width: 64px; padding: 5px 8px; }
+.pg-input::-webkit-outer-spin-button, .pg-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 </style>

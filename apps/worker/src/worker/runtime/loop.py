@@ -106,7 +106,8 @@ class FactStore:
                            DO NOTHING""",
                         (tracking_id, ev.event_fingerprint, ev.occurred_at,
                          ev.status, ev.description_raw, ev.description_zh,
-                         ev.location, ev.event_code, ev.time_confidence))
+                         (ev.location or "")[:500] or None,  # 防御：location 列 VARCHAR(500)，超长截断
+                         ev.event_code, ev.time_confidence))
                     stats.events_written += cur.rowcount
                 cur.execute(
                     """UPDATE tracking

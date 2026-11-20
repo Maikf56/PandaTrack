@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type GroupView, type BatchView, type TrackingView, type CheckUpdateResult } from '../api/client'
-import { loadStatusDict, lang } from '../composables/session'
+import { loadStatusDict } from '../composables/session'
 import { t } from '../i18n'
 import { hasUpdate, visibilityPolling, createChangeTracker } from '../composables/sse'
 import StatusDistBar from '../components/StatusDistBar.vue'
@@ -32,7 +32,7 @@ onMounted(async () => {
 })
 onUnmounted(() => { stopPolling(); if (reloadTimer) clearTimeout(reloadTimer) })
 
-watch([groupId, lang], () => { void reload() })
+watch(groupId, () => { void reload() })
 
 async function reload() {
   loading.value = batches.value.length === 0
@@ -41,7 +41,8 @@ async function reload() {
     const [g, bs, ts] = await Promise.all([
       api.get<GroupView[]>('/api/v1/groups'),
       api.get<BatchView[]>(`/api/v1/groups/${groupId.value}/batches`, { limit: 100 }),
-      api.get<TrackingView[]>('/api/v1/trackings', { lang: lang.value || undefined }),
+      // P17：原文直出（事件含英文原文+词典中文），翻译由卡片本地切换
+      api.get<TrackingView[]>('/api/v1/trackings'),
     ])
     group.value = g.data.find((x) => x.id === groupId.value) ?? null
     batches.value = bs.data
@@ -136,7 +137,9 @@ async function exportGroup() {
             <button class="btn ghost sm" :disabled="exporting" @click="exportGroup">{{ t('common.export') }}</button>
           </div>
         </div>
-        <p class="hint">{{ group.tracking_count }}{{ t('gb.numbers_unit') }} · {{ group.batch_count }}{{ t('gb.batches_unit') }}</p>
+        <p class="hint">
+          {{ t('gb.summary', { n: group.tracking_count, b: group.batch_count }) }}
+        </p>
         <StatusDistBar :distribution="group.status_distribution" :total="group.tracking_count" />
         <p v-if="checkFeedback" class="ok-box" role="status">{{ checkFeedback }}</p>
       </div>

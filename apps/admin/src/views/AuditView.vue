@@ -13,7 +13,7 @@ const expanded = ref<Set<number>>(new Set())
 const ACTION_ZH: Record<string, string> = {
   customer_status_change: '客户状态变更',
   provider_toggle: 'Provider 启停',
-  points_adjust: '积分调整',
+  admin_adjust_points: '积分调整',
 }
 
 onMounted(reload)
@@ -60,7 +60,7 @@ function fmtDetail(d: Record<string, unknown> | null): string {
           <option value="">全部动作</option>
           <option value="customer_status_change">客户状态变更</option>
           <option value="provider_toggle">Provider 启停</option>
-          <option value="points_adjust">积分调整</option>
+          <option value="admin_adjust_points">积分调整</option>
         </select>
       </div>
       <p class="hint" style="align-self: end">共 {{ total }} 条</p>

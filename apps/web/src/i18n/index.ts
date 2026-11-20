@@ -203,6 +203,8 @@ const dict: Record<string, Entry> = {
   'register.done_body': { zh: '账号已创建，管理员审核通过后即可登录。审核通常在一个工作日内完成。', en: 'Your account is created. You can sign in once an administrator approves it, usually within one business day.' },
   'register.to_login': { zh: '返回登录', en: 'Back to sign in' },
   'register.have_account': { zh: '已有账号？直接登录', en: 'Already have an account? Sign in' },
+  'register.invite_code': { zh: '邀请码（选填）', en: 'Invite code (optional)' },
+  'register.invite_hint': { zh: '填写好友的邀请码，审核通过后对方可获得积分奖励。', en: "Enter a friend's invite code; they earn bonus points once your account is approved." },
   'forgot.title': { zh: '找回密码', en: 'Reset password' },
   'forgot.body': { zh: '密码自助重置通道即将开放。当前请联系支持，提供注册邮箱，人工验证后为你重置。', en: 'Self-service reset is coming soon. For now, contact support with your registered email; we will verify and reset it manually.' },
   'forgot.hint': { zh: '重置成功后请重新登录；会话安全不受影响。', en: 'Sign in again after reset; session security is unaffected.' },
@@ -415,6 +417,12 @@ const dict: Record<string, Entry> = {
   'card.query_count': { zh: '查询次数', en: 'Query count' },
   'card.last_query': { zh: '最后查询', en: 'Last query' },
   'card.created': { zh: '创建时间', en: 'Created' },
+  'card.translate': { zh: '翻译', en: 'Translate' },
+  'card.show_original': { zh: '显示原文', en: 'Show original' },
+  'card.translating': { zh: '翻译中…', en: 'Translating…' },
+  'card.rel_min': { zh: '{n} 分钟前', en: '{n} min ago' },
+  'card.rel_hour': { zh: '{n} 小时前', en: '{n} hr ago' },
+  'card.rel_day': { zh: '{n} 天前', en: '{n} d ago' },
 
   /* ===== 组内批次页（P15 二级）===== */
   'gb.crumb_group': { zh: '查询组', en: 'Group' },
@@ -427,6 +435,12 @@ const dict: Record<string, Entry> = {
   'gb.no_batches': { zh: '这个组还没有提交批次。', en: 'No submission batches in this group yet.' },
   'gb.last_query': { zh: '最近查询 {time}', en: 'Last query {time}' },
   'gb.terminal_badge': { zh: '已完结 {n}', en: '{n} terminal' },
+  'gb.summary': { zh: '共 {n} 个单号 · {b} 个批次', en: '{n} numbers · {b} batches' },
+  /* P17 批次页分页器 */
+  'bt.pager_total': { zh: '共 {n} 条', en: '{n} items' },
+  'bt.pager_per': { zh: '每页', en: 'Per page' },
+  'bt.pager_jump': { zh: '跳至', en: 'Go to' },
+  'bt.pager_page': { zh: '页', en: '' },
 
   /* ===== 批次单号页（P15 三级）===== */
   'bt.crumb_batch': { zh: '批次', en: 'Batch' },
@@ -580,6 +594,13 @@ const dict: Record<string, Entry> = {
   'settings.sort.status': { zh: '按状态', en: 'By status' },
   'settings.save_prefs': { zh: '保存偏好', en: 'Save preferences' },
   'settings.prefs_ok': { zh: '显示偏好已保存。', en: 'Preferences saved.' },
+  'settings.profile_title': { zh: '个人资料', en: 'Profile' },
+  'settings.profile_name': { zh: '姓名', en: 'Name' },
+  'settings.profile_phone': { zh: '电话', en: 'Phone' },
+  'settings.profile_remark': { zh: '备注', en: 'Note' },
+  'settings.profile_save': { zh: '保存资料', en: 'Save profile' },
+  'settings.profile_ok': { zh: '资料已保存。', en: 'Profile saved.' },
+  'settings.profile_email_hint': { zh: '登录邮箱不可自行修改，如需变更请联系客服。', en: 'The sign-in email cannot be changed here; contact support if needed.' },
 
   /* ===== 使用指南 ===== */
   'guide.title': { zh: '使用指南', en: 'Guide' },

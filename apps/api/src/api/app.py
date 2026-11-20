@@ -78,8 +78,8 @@ def create_app(dsn: str | None = None, dsn_a: str | None = None) -> FastAPI:
     for r in (auth, submissions, tracking, billing, events, meta):
         app.include_router(r.router)
     # 管理端路由（独立域名 + 独立鉴权，路径隔离 /api/v1/admin）
-    from api.routes import admin_auth, admin_customers, admin_providers, admin_billing, admin_audit  # noqa: F401
-    for r in (admin_auth, admin_customers, admin_providers, admin_billing, admin_audit):
+    from api.routes import admin_auth, admin_customers, admin_providers, admin_billing, admin_audit, admin_runlog  # noqa: F401
+    for r in (admin_auth, admin_customers, admin_providers, admin_billing, admin_audit, admin_runlog):
         app.include_router(r.router)
     # 次要页面路由（04 §5.8-5.12：组与批次/导入/导出/统计/设置）+ 邀请好友
     from api.routes import exports, groups, invites, settings, stats  # noqa: F401

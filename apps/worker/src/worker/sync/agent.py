@@ -81,7 +81,10 @@ class SyncAgent:
                 "time_confidence": r[9] or "low",
                 "status_key": r[4] or "other",
                 "label_zh": std.label_zh if std else "其他状态",
-                "description": r[6] or r[5] or "",
+                # P17 竞品式双语：description 恒为英文原文（默认直出），
+                # description_zh 为 USPS 短语词典中文（前端「翻译」切换用）
+                "description": r[5] or "",
+                "description_zh": r[6] or None,
                 "location": r[7] or None,
                 "event_code": r[8] or None,
             })

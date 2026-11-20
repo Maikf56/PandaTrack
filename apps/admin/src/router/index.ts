@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/customers', name: 'customers', component: () => import('../views/CustomersView.vue'), meta: { auth: true, perm: 'customers:read' } },
     { path: '/billing', name: 'billing', component: () => import('../views/BillingView.vue'), meta: { auth: true, perm: 'billing:read' } },
     { path: '/providers', name: 'providers', component: () => import('../views/ProvidersView.vue'), meta: { auth: true, perm: 'providers:read' } },
+    { path: '/runlog', name: 'runlog', component: () => import('../views/RunLogView.vue'), meta: { auth: true, perm: 'audit:read' } },
     { path: '/audit', name: 'audit', component: () => import('../views/AuditView.vue'), meta: { auth: true, perm: 'audit:read' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

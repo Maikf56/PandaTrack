@@ -103,39 +103,40 @@ def check_updates(payload: CheckUpdatesRequest,
 
 
 def _translate_rows(rows: list[dict], lang: str, repo: BRepository) -> list[dict]:
-    """按 lang 机翻事件描述（增值降级：无 key/失败保持原文，原样返回）。
+    """按 lang 补全 description_zh（P17 竞品式：默认英文直出，「翻译」切换中文）。
 
-    仅翻 description 自由文本；label_zh/status_key 走静态字典不过机翻。
-    整页文本合并为一次 translate_texts 调用（一次缓存 SELECT + 至多一次
-    Google 批量请求），避免逐行查询的 N+1。
+    description 恒为英文原文，绝不覆盖；中文优先取词典翻译
+    （投影层 USPS 短语映射，质量最高），缺失条目才走机翻兜底
+    （Google/LibreTranslate，未配置则保持 None 前端回退原文）。
+    lang=en 时清空 description_zh（原文即英文）。
     """
     lang = (lang or "").strip().lower()
     if lang not in SUPPORTED_LANGS:
         return rows
-    texts: list[str] = []
+    if lang == "en":
+        for row in rows:
+            for e in (row.get("events") or []):
+                if isinstance(e, dict):
+                    e["description_zh"] = None
+        return rows
+    # zh：找缺词典翻译的条目，机翻补缺（不覆盖已有词典译文）
+    missing: list[str] = []
     for row in rows:
         for e in (row.get("events") or []):
-            if isinstance(e, dict):
-                texts.append(e.get("description") or e.get("description_zh") or "")
-    if not any(texts):
-        return rows
-    mapping = translate_texts(repo=repo, lang=lang, texts=texts)
-    if not mapping:
-        return rows
-    out: list[dict] = []
+            if isinstance(e, dict) and not e.get("description_zh"):
+                text = e.get("description") or ""
+                if text.strip():
+                    missing.append(text)
+    mapping: dict[str, str] = {}
+    if missing:
+        mapping = translate_texts(repo=repo, lang="zh", texts=missing)
     for row in rows:
-        row = dict(row)
-        events = []
         for e in (row.get("events") or []):
-            if isinstance(e, dict):
-                e = dict(e)
-                text = e.get("description") or e.get("description_zh") or ""
+            if isinstance(e, dict) and not e.get("description_zh"):
+                text = e.get("description") or ""
                 if text and text in mapping:
-                    e["description"] = mapping[text]
-            events.append(e)
-        row["events"] = events
-        out.append(row)
-    return out
+                    e["description_zh"] = mapping[text]
+    return rows
 
 
 def _to_view(row: dict) -> TrackingView:
@@ -147,6 +148,7 @@ def _to_view(row: dict) -> TrackingView:
         status_key=e.get("status_key", e.get("status", "other")),
         label_zh=e.get("label_zh", std.label_zh),
         description=e.get("description", e.get("description_zh", "")),
+        description_zh=e.get("description_zh"),
         location=e.get("location"),
         event_code=e.get("event_code"),
     ) for e in (row.get("events") or []) if isinstance(e, dict)]

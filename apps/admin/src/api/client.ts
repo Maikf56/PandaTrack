@@ -54,8 +54,8 @@ export const api = {
     request<T>('GET', path, { query }),
   post: <T>(path: string, json?: unknown, query?: Record<string, string | number | boolean | undefined>) =>
     request<T>('POST', path, { json, query }),
-  patch: <T>(path: string, query?: Record<string, string | number | boolean | undefined>) =>
-    request<T>('PATCH', path, { query }),
+  patch: <T>(path: string, query?: Record<string, string | number | boolean | undefined>, json?: unknown) =>
+    request<T>('PATCH', path, { query, json }),
 }
 
 // ---- 管理端会话状态 ----
@@ -77,6 +77,9 @@ export interface CustomerRow {
   status: string
   tenant_id: number | null
   created_at: string
+  name?: string
+  phone?: string
+  remark?: string
   balance?: number
 }
 
@@ -101,6 +104,37 @@ export interface AuditRow {
   target: string | null
   detail: Record<string, unknown> | null
   created_at: string
+}
+
+export interface RunLogRow {
+  run_log_id: number
+  worker_id: string
+  cycle: number | null
+  level: 'info' | 'warn' | 'error' | string
+  kind: string
+  reclaimed: number
+  claimed: number
+  succeeded: number
+  retried: number
+  dead_lettered: number
+  facts_written: number
+  events_written: number
+  outbox_written: number
+  error_class: string | null
+  summary: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface AttemptRow {
+  attempt_id: number
+  provider_code: string
+  error_class: string | null
+  quality_gates: Record<string, unknown> | null
+  created_at: string
+  job_id: number
+  state: string
+  attempt: number
+  number: string
 }
 
 export interface LedgerRow {

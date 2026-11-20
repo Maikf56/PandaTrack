@@ -201,6 +201,7 @@ class WorkerDaemon:
                  clock: Callable[[], float] | None = None,
                  sleeper: Callable[[float], None] | None = None,
                  reset: Callable[[], None] | None = None,
+                 record: Callable[["CycleReport"], None] | None = None,
                  logger=None):
         self._loop = loop
         self._sync = sync
@@ -210,6 +211,7 @@ class WorkerDaemon:
         self._clock = clock or time.monotonic
         self._sleep = sleeper or time.sleep
         self._reset = reset or (lambda: None)
+        self._record = record
         self._log = logger or log
         self._next_sync_at: float = self._clock() + sync_interval_s
         self._cycle_no = 0
@@ -241,12 +243,24 @@ class WorkerDaemon:
             report.error = f"tick: {type(exc).__name__}: {exc}"
             self._log.exception("tick failed")
             self._reset()
+            self._record_run(report)
             return report
         if self._clock() >= self._next_sync_at:
             self._run_sync(report)
             self._next_sync_at = self._clock() + self._sync_interval
         self._log.info("cycle %s", report.to_log())
+        self._record_run(report)
         return report
+
+    def _record_run(self, report: CycleReport) -> None:
+        """cycle 报告 → A 库 run_log（管理端"系统运行日志"）；失败不致命。"""
+        if self._record is None:
+            return
+        try:
+            self._record(report)
+        except Exception:
+            self._log.exception("run_log record failed (non-fatal)")
+            self._reset()
 
     def _run_sync(self, report: CycleReport) -> None:
         rounds = self._sync.run_until_drained()
@@ -356,9 +370,18 @@ def build_components(settings: WorkerSettings) -> dict[str, Any]:
         connect_a.reset()
         connect_b.reset()
 
+    def record(report: CycleReport) -> None:
+        from worker.runtime.runlog import record_cycle
+        record_cycle(connect_a, settings.worker_id, cycle=report.cycle,
+                     tick=report.tick,
+                     enqueue_summary=report.enqueue_summary,
+                     sync_summary=report.sync_summary,
+                     error=report.error)
+
     return {"loop": loop, "sync": sync, "enqueue": enqueue,
             "circuit": circuit,
             "provider": provider, "reset": reset,
+            "record": record,
             "close": lambda: (connect_a.close(), connect_b.close())}
 
 
@@ -391,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         enqueue=components["enqueue"],
         tick_interval_s=settings.tick_interval_s,
         sync_interval_s=settings.sync_interval_s,
-        reset=components["reset"])
+        reset=components["reset"], record=components["record"])
     try:
         if args.mode == "sync":
             rounds = components["sync"].run_until_drained()

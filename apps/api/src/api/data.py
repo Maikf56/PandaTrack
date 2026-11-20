@@ -24,6 +24,10 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# 邀请奖励（P17 用户裁定）：好友审核通过激活时，邀请人一次性得 500 积分。
+INVITE_REWARD_POINTS = 500
+
+
 class BRepository:
     """B 库访问；dsn 由环境变量注入。
 
@@ -70,9 +74,12 @@ class BRepository:
         return {"customer_id": row[0], "public_id": str(row[1]),
                 "role": row[4], "tenant_id": row[5], "email": row[6]}
 
-    def register_customer(self, email: str, password_hash: str) -> dict:
+    def register_customer(self, email: str, password_hash: str,
+                          inviter_customer_id: int | None = None) -> dict:
         """开放注册（P16）：建 pending 客户 + 0 余额钱包，等管理端审核。
 
+        inviter_customer_id 非空时记录邀请关系（P17：invite_friend pending，
+        奖励在审核通过激活时发放——见 update_customer_status）。
         与登录同库原子；邮箱唯一冲突抛 EMAIL_EXISTS（路由转 409）。
         """
         with self.connect() as conn:
@@ -88,7 +95,28 @@ class BRepository:
                     "INSERT INTO wallet (customer_id, balance) VALUES (%s, 0)",
                     (row[0],),
                 )
+                if inviter_customer_id is not None:
+                    cur.execute(
+                        """INSERT INTO invite_friend
+                           (inviter_customer_id, friend_customer_id, friend_email, status)
+                           VALUES (%s, %s, %s, 'pending')""",
+                        (inviter_customer_id, row[0], email),
+                    )
         return {"customer_id": row[0], "public_id": str(row[1])}
+
+    def resolve_invite_code(self, code: str) -> int | None:
+        """校验邀请码有效性，返回邀请人 customer_id；无效返回 None。
+
+        由注册路由在防爆破检查之后、建号之前调用——无效码直接 400，
+        不计入防爆破失败（笔误不应惩罚）。
+        """
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT customer_id FROM invite_code WHERE code=%s",
+                    (str(code).strip().upper(),))
+                row = cur.fetchone()
+        return row[0] if row else None
 
     @staticmethod
     def _verify_password(password: str, stored: str) -> bool:
@@ -503,7 +531,7 @@ class BRepository:
     def list_customers(self, *, tenant_id: int | None = None,
                        status: str | None = None,
                        limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
-        """客户列表（管理端）：带钱包余额（LEFT JOIN，无钱包行视为 0）。status 可过滤。"""
+        """客户列表（管理端）：带钱包余额（LEFT JOIN，无钱包行视为 0）+ 资料字段（P17）。status 可过滤。"""
         where, params = [], []
         if tenant_id is not None:
             where.append("c.tenant_id=%s")
@@ -519,7 +547,7 @@ class BRepository:
                 total = cur.fetchone()[0]
                 cur.execute(
                     """SELECT c.customer_id, c.public_id, c.email, c.status, c.role,
-                              c.tenant_id, c.created_at,
+                              c.tenant_id, c.created_at, c.name, c.phone, c.remark,
                               COALESCE(w.balance, 0) AS balance
                        FROM customer c
                        LEFT JOIN wallet w ON w.customer_id = c.customer_id"""
@@ -529,16 +557,146 @@ class BRepository:
         return ([{"customer_id": r[0], "public_id": str(r[1]), "email": r[2],
                   "status": r[3], "role": r[4], "tenant_id": r[5],
                   "created_at": r[6].isoformat() if r[6] else "",
-                  "balance": r[7]}
+                  "name": r[7], "phone": r[8], "remark": r[9], "balance": r[10]}
                  for r in rows], total)
 
     def update_customer_status(self, customer_id: int, status: str) -> bool:
+        """状态变更；置 active 时同事务结算邀请奖励（P17）。
+
+        奖励规则：该客户是被邀请人且 invite_friend 仍为 pending（审核通过激活，
+        或被冻结后恢复均算激活，pending 场景唯一）→ 邀请人钱包 +500 并写
+        invite_reward 台账，关系置 rewarded（只发一次，无重复结算）。
+        """
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE customer SET status=%s, updated_at=now() WHERE customer_id=%s",
                     (status, customer_id))
-                return cur.rowcount > 0
+                ok = cur.rowcount > 0
+                if ok and status == "active":
+                    cur.execute(
+                        """SELECT f.friend_id, f.inviter_customer_id, f.friend_email
+                           FROM invite_friend f
+                           WHERE f.friend_customer_id=%s AND f.status='pending'""",
+                        (customer_id,))
+                    for friend_id, inviter_id, friend_email in cur.fetchall():
+                        description = f"邀请好友注册奖励（好友 {friend_email}）"
+                        cur.execute(
+                            """INSERT INTO points_ledger
+                               (customer_id, ledger_type, points_change, description)
+                               VALUES (%s, 'invite_reward', %s, %s)""",
+                            (inviter_id, INVITE_REWARD_POINTS, description))
+                        cur.execute(
+                            """UPDATE wallet SET balance=balance+%s, updated_at=now()
+                               WHERE customer_id=%s""",
+                            (INVITE_REWARD_POINTS, inviter_id))
+                        cur.execute(
+                            """UPDATE invite_friend
+                               SET status='rewarded', points_awarded=%s
+                               WHERE friend_id=%s""",
+                            (INVITE_REWARD_POINTS, friend_id))
+                return ok
+
+    # ---- 管理端建号 / 资料维护（P17）----
+
+    def create_customer_admin(self, *, email: str, password_hash: str,
+                              name: str = "", phone: str = "", remark: str = "",
+                              initial_points: int = 0,
+                              actor_id: int, actor_role: str) -> dict:
+        """管理端手动开户：建号即 active + 钱包（初始积分）+ 台账 + 审计，同事务原子。
+
+        邮箱唯一冲突抛 UniqueViolation，路由转 409 EMAIL_EXISTS。
+        """
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO customer
+                       (email, password_hash, status, role, name, phone, remark)
+                       VALUES (%s, %s, 'active', 'member', %s, %s, %s)
+                       RETURNING customer_id, public_id""",
+                    (email, password_hash, name, phone, remark))
+                row = cur.fetchone()
+                cur.execute(
+                    "INSERT INTO wallet (customer_id, balance) VALUES (%s, %s)",
+                    (row[0], initial_points))
+                if initial_points:
+                    cur.execute(
+                        """INSERT INTO points_ledger
+                           (customer_id, ledger_type, points_change, description)
+                           VALUES (%s, 'admin_adjust', %s, '开户初始积分')""",
+                        (row[0], initial_points))
+                cur.execute(
+                    """INSERT INTO audit_log (actor_id, actor_role, action, target, detail)
+                       VALUES (%s, %s, 'customer_created', %s, %s)""",
+                    (actor_id, actor_role, str(row[0]),
+                     json.dumps({"email": email, "initial_points": initial_points})))
+            conn.commit()
+        return {"customer_id": row[0], "public_id": str(row[1])}
+
+    _PROFILE_FIELDS = {"name", "phone", "remark"}
+
+    def update_customer_profile_admin(self, customer_id: int, patch: dict,
+                                      *, actor_id: int, actor_role: str) -> dict | None:
+        """管理端改客户资料/邮箱/重置密码。patch 为已校验字段子集
+        （name/phone/remark/email/password_hash）。返回更新后行；客户不存在返回 None。
+
+        审计只记变更字段名，不记密码值；邮箱冲突抛 UniqueViolation（路由转 409）。
+        """
+        sets, params = [], []
+        for key in ("name", "phone", "remark", "email", "password_hash"):
+            if key in patch:
+                sets.append(f"{key}=%s")
+                params.append(patch[key])
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE customer SET {sets}, updated_at=now()
+                       WHERE customer_id=%s RETURNING
+                           customer_id, public_id, email, status, role,
+                           tenant_id, name, phone, remark""".format(sets=", ".join(sets)),
+                    (*params, customer_id))
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                cur.execute(
+                    """INSERT INTO audit_log (actor_id, actor_role, action, target, detail)
+                       VALUES (%s, %s, 'customer_profile_update', %s, %s)""",
+                    (actor_id, actor_role, str(customer_id),
+                     json.dumps({"fields": sorted(
+                         "password" if k == "password_hash" else k for k in patch)})))
+            conn.commit()
+        return {"customer_id": row[0], "public_id": str(row[1]), "email": row[2],
+                "status": row[3], "role": row[4], "tenant_id": row[5],
+                "name": row[6], "phone": row[7], "remark": row[8]}
+
+    def get_customer_profile(self, customer_id: int) -> dict | None:
+        """客户自助读取自己的资料（设置页回填）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT email, name, phone, remark FROM customer WHERE customer_id=%s",
+                    (customer_id,))
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return {"email": row[0], "name": row[1], "phone": row[2], "remark": row[3]}
+
+    def update_customer_profile_self(self, customer_id: int, patch: dict) -> dict:
+        """客户自助改资料（仅 name/phone/remark）；返回更新后资料。"""
+        sets, params = [], []
+        for key in ("name", "phone", "remark"):
+            if key in patch:
+                sets.append(f"{key}=%s")
+                params.append(patch[key])
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE customer SET {sets}, updated_at=now() WHERE customer_id=%s "
+                    "RETURNING email, name, phone, remark".format(sets=", ".join(sets)),
+                    (*params, customer_id))
+                row = cur.fetchone()
+            conn.commit()
+        return {"email": row[0], "name": row[1], "phone": row[2], "remark": row[3]}
 
     # ---- Provider 健康/任务（只读）----
     def provider_health(self) -> list[dict]:
@@ -592,7 +750,8 @@ class BRepository:
                            VALUES (%s, %s, 'admin_adjust_points', %s, %s)""",
                         (actor_id, actor_role, str(customer_id),
                          json.dumps({"delta": delta, "ledger_id": str(ledger_id),
-                                     "new_balance": balance})))
+                                     "new_balance": balance,
+                                     "description": description})))
                 conn.commit()
                 return {"ledger_id": str(ledger_id), "new_balance": balance}
             except Exception:
@@ -653,6 +812,59 @@ class BRepository:
                  "action": r[3], "target": r[4], "detail": r[5],
                  "created_at": r[6].isoformat() if r[6] else ""}
                 for r in rows], total)
+
+    # ---- 系统运行日志（A 库 run_log；worker 每轮 cycle 落一行，a/0003）----
+    def run_log(self, *, limit: int = 100, offset: int = 0,
+                level: str | None = None) -> tuple[list[dict], int]:
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                where = "WHERE 1=1"
+                params: list = []
+                if level:
+                    where += " AND level=%s"
+                    params.append(level)
+                cur.execute(f"SELECT count(*) FROM run_log {where}", params)
+                total = cur.fetchone()[0]
+                cur.execute(
+                    f"""SELECT run_log_id, worker_id, cycle, level, kind,
+                               reclaimed, claimed, succeeded, retried,
+                               dead_lettered, facts_written, events_written,
+                               outbox_written, error_class, summary, created_at
+                        FROM run_log {where}
+                        ORDER BY created_at DESC LIMIT %s OFFSET %s""",
+                    (*params, limit, offset))
+                rows = cur.fetchall()
+        return ([{"run_log_id": r[0], "worker_id": r[1], "cycle": r[2],
+                  "level": r[3], "kind": r[4],
+                  "reclaimed": r[5], "claimed": r[6], "succeeded": r[7],
+                  "retried": r[8], "dead_lettered": r[9],
+                  "facts_written": r[10], "events_written": r[11],
+                  "outbox_written": r[12], "error_class": r[13],
+                  "summary": r[14],
+                  "created_at": r[15].isoformat() if r[15] else ""}
+                 for r in rows], total)
+
+    def recent_attempts(self, *, limit: int = 50) -> list[dict]:
+        """最近采集明细（fetch_attempt_log + fetch_job + tracking）：
+        单号、任务状态与错误类别，供"系统运行日志"页看每单结果。"""
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT a.attempt_id, a.provider_code, a.error_class,
+                              a.quality_gates, a.created_at,
+                              j.job_id, j.state, j.attempt,
+                              t.normalized_number
+                       FROM fetch_attempt_log a
+                       JOIN fetch_job j ON j.job_id = a.job_id
+                       JOIN tracking t ON t.tracking_id = j.tracking_id
+                       ORDER BY a.created_at DESC LIMIT %s""",
+                    (limit,))
+                rows = cur.fetchall()
+        return [{"attempt_id": r[0], "provider_code": r[1],
+                 "error_class": r[2], "quality_gates": r[3],
+                 "created_at": r[4].isoformat() if r[4] else "",
+                 "job_id": r[5], "state": r[6], "attempt": r[7],
+                 "number": r[8]} for r in rows]
 
     # ============ 次要页面：组与批次 / 导入 / 导出 / 统计 / 设置 ============
     # （04 §5.8-5.12；b/0004 扩列。全部 tenant scope，对外 public_id。）
@@ -725,13 +937,16 @@ class BRepository:
              customer_id, group_public_id))
 
     def delete_group(self, customer_id: int, group_public_id: str) -> bool:
-        """删除组只清组织关系（成员/批次 group_id 置空），不动事实与账务。"""
+        """删除组只清组织关系（成员/批次 group_id 置空），不动事实与账务。
+
+        P17 修复：group_id 列带 FK REFERENCES target_group，必须先置空
+        引用再删组行，否则外键违反整段回滚（此前表现为「系统繁忙」）。
+        """
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """DELETE FROM target_group
-                       WHERE customer_id=%s AND public_id=%s
-                       RETURNING group_id""",
+                    """SELECT group_id FROM target_group
+                       WHERE customer_id=%s AND public_id=%s""",
                     (customer_id, group_public_id))
                 row = cur.fetchone()
                 if row is None:
@@ -743,6 +958,8 @@ class BRepository:
                 cur.execute(
                     """UPDATE submission_operation SET group_id=NULL
                        WHERE group_id=%s""", (gid,))
+                cur.execute(
+                    "DELETE FROM target_group WHERE group_id=%s", (gid,))
             conn.commit()
         return True
 
@@ -770,6 +987,29 @@ class BRepository:
                     """INSERT INTO target_group (customer_id, name, is_default)
                        VALUES (%s, '默认组', true) RETURNING group_id""",
                     (customer_id,))
+                gid = cur.fetchone()[0]
+            conn.commit()
+        return gid
+
+    def resolve_group_by_name(self, customer_id: int, name: str) -> int:
+        """按名称取（或建）客户组（P17：提交目标组生效）。
+
+        提交时前端传 target_group_name；同名组不存在则创建（提交是
+        组织意图，不存在即建，避免受理成功却挂不上组）。
+        """
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT group_id FROM target_group
+                       WHERE customer_id=%s AND name=%s
+                       ORDER BY group_id LIMIT 1""", (customer_id, name))
+                row = cur.fetchone()
+                if row:
+                    return row[0]
+                cur.execute(
+                    """INSERT INTO target_group (customer_id, name)
+                       VALUES (%s, %s) RETURNING group_id""",
+                    (customer_id, name))
                 gid = cur.fetchone()[0]
             conn.commit()
         return gid
