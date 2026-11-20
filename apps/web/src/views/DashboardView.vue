@@ -107,8 +107,7 @@ const quickDraft = computed(() => splitDraft(quickInput.value))
       <div class="card main-actions">
         <RouterLink class="btn" to="/submit">提交单号</RouterLink>
         <RouterLink class="btn ghost" to="/quick">临时快查</RouterLink>
-        <RouterLink class="btn ghost" to="/results">结果列表</RouterLink>
-        <RouterLink class="btn ghost" to="/submissions">提交记录</RouterLink>
+        <RouterLink class="btn ghost" to="/results">我的查询</RouterLink>
       </div>
 
       <!-- 快捷查询输入（04 §5.5 第二行） -->

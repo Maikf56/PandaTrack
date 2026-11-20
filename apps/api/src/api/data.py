@@ -791,7 +791,7 @@ class BRepository:
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""SELECT so.public_id, so.state, so.total_count,
+                    f"""SELECT so.operation_id, so.public_id, so.state, so.total_count,
                                so.valid_count, so.points_charged,
                                so.created_at, so.updated_at, g.name
                         FROM submission_operation so
@@ -800,11 +800,30 @@ class BRepository:
                         ORDER BY so.created_at DESC LIMIT %s""",
                     (*params, limit))
                 rows = cur.fetchall()
-        return [{"id": str(r[0]), "state": r[1], "total_count": r[2],
-                 "valid_count": r[3], "points_charged": r[4],
-                 "group_name": r[7],
-                 "created_at": r[5].isoformat() if r[5] else "",
-                 "updated_at": r[6].isoformat() if r[6] else ""}
+                # 各批次物流状态分布（三级页面批次卡片，P15）。
+                cur.execute(
+                    """SELECT so.operation_id, tp.status, count(*)
+                       FROM submission_operation so
+                       JOIN submission_batch sb ON sb.operation_id=so.operation_id
+                       JOIN submission_item si ON si.batch_id=sb.batch_id
+                         AND si.is_valid=true
+                       JOIN customer_tracking ct
+                         ON ct.customer_id=so.customer_id
+                        AND ct.normalized_number=si.normalized_number
+                       LEFT JOIN tracking_projection tp
+                         ON tp.customer_tracking_id=ct.customer_tracking_id
+                       WHERE so.customer_id=%s
+                       GROUP BY so.operation_id, tp.status""",
+                    (customer_id,))
+                dist: dict[int, dict[str, int]] = {}
+                for oid, status, n in cur.fetchall():
+                    dist.setdefault(oid, {})[status or "other"] = n
+        return [{"id": str(r[1]), "state": r[2], "total_count": r[3],
+                 "valid_count": r[4], "points_charged": r[5],
+                 "group_name": r[8],
+                 "status_distribution": dist.get(r[0], {}),
+                 "created_at": r[6].isoformat() if r[6] else "",
+                 "updated_at": r[7].isoformat() if r[7] else ""}
                 for r in rows]
 
     def batch_detail(self, customer_id: int, operation_public_id: str) -> dict | None:
@@ -1089,3 +1108,95 @@ class BRepository:
                 row = cur.fetchone()
             conn.commit()
         return row[0] if row else {}
+
+    # ---- 邀请好友（P15 脚手架；奖励结算依赖开放注册）----
+    _INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+    def _new_invite_code(self) -> str:
+        import secrets
+        return "".join(secrets.choice(self._INVITE_ALPHABET) for _ in range(8))
+
+    def get_or_create_invite(self, customer_id: int) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT code, created_at FROM invite_code "
+                    "WHERE customer_id=%s ORDER BY invite_code_id DESC LIMIT 1",
+                    (customer_id,))
+                row = cur.fetchone()
+                if row is None:
+                    for _ in range(5):  # code 唯一冲突重试
+                        try:
+                            cur.execute(
+                                "INSERT INTO invite_code (customer_id, code) "
+                                "VALUES (%s, %s) RETURNING code",
+                                (customer_id, self._new_invite_code()))
+                            code = cur.fetchone()[0]
+                            break
+                        except psycopg.errors.UniqueViolation:
+                            continue
+                    else:
+                        raise ApiProblem(codes.INTERNAL_ERROR)
+                    conn.commit()
+                else:
+                    code = row[0]
+        return {"code": code}
+
+    def regenerate_invite(self, customer_id: int) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM invite_code WHERE customer_id=%s", (customer_id,))
+                code = None
+                for _ in range(5):
+                    try:
+                        cur.execute(
+                            "INSERT INTO invite_code (customer_id, code) "
+                            "VALUES (%s, %s) RETURNING code",
+                            (customer_id, self._new_invite_code()))
+                        code = cur.fetchone()[0]
+                        break
+                    except psycopg.errors.UniqueViolation:
+                        continue
+                else:
+                    raise ApiProblem(codes.INTERNAL_ERROR)
+            conn.commit()
+        return {"code": code}
+
+    def invite_summary(self, customer_id: int) -> dict:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT code FROM invite_code WHERE customer_id=%s "
+                    "ORDER BY invite_code_id DESC LIMIT 1", (customer_id,))
+                row = cur.fetchone()
+                if row is None:
+                    conn.commit()
+                code = row[0] if row else None
+                cur.execute(
+                    "SELECT count(*), "
+                    "count(*) FILTER (WHERE status='recharged'), "
+                    "coalesce(sum(points_awarded), 0) "
+                    "FROM invite_friend WHERE inviter_customer_id=%s",
+                    (customer_id,))
+                invited, recharged, awarded = cur.fetchone()
+        if code is None:
+            return self.get_or_create_invite(customer_id) | {
+                "invited_count": invited, "recharged_count": recharged,
+                "awarded_points": awarded}
+        return {"code": code, "invited_count": invited,
+                "recharged_count": recharged, "awarded_points": awarded}
+
+    def list_invite_friends(self, customer_id: int, *,
+                            limit: int = 50) -> list[dict]:
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT friend_email, status, points_awarded, created_at
+                       FROM invite_friend WHERE inviter_customer_id=%s
+                       ORDER BY created_at DESC LIMIT %s""",
+                    (customer_id, limit))
+                rows = cur.fetchall()
+        return [{"friend_email": r[0], "status": r[1], "points_awarded": r[2],
+                 "created_at": r[3].isoformat() if r[3] else ""}
+                for r in rows]

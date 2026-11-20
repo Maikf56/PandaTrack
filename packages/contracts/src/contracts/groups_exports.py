@@ -34,6 +34,7 @@ class BatchView(BaseModel):
     valid_count: int = 0
     points_charged: int = 0
     group_name: str | None = None
+    status_distribution: dict[str, int] = Field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
 

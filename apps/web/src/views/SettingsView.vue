@@ -3,7 +3,8 @@ import { ref, onMounted } from 'vue'
 import { api, type SessionView } from '../api/client'
 import { loadSession, session } from '../composables/session'
 
-// 设置页（04 §5.12）：修改密码 / 会话管理 / 显示偏好。
+// 设置页（04 §5.12；P15 精简）：修改密码 / 会话管理。
+// 移除「显示偏好」（时区/默认排序）——客户反馈无实际用途。
 const loading = ref(true)
 const error = ref('')
 const notice = ref('')
@@ -13,24 +14,12 @@ const newPassword = ref('')
 const pwdBusy = ref(false)
 
 const sessions = ref<SessionView[]>([])
-const prefs = ref<{ timezone?: string; default_sort?: string }>({})
-
-const TIMEZONES = ['Asia/Shanghai', 'UTC', 'America/New_York', 'America/Los_Angeles']
-const SORTS = [
-  { value: 'created_desc', label: '最新提交在前' },
-  { value: 'created_asc', label: '最早提交在前' },
-  { value: 'status', label: '按状态' },
-]
 
 onMounted(async () => {
   await loadSession(true)
   try {
-    const [ss, pf] = await Promise.all([
-      api.get<SessionView[]>('/api/v1/settings/sessions'),
-      api.get<Record<string, string>>('/api/v1/settings/preferences'),
-    ])
+    const ss = await api.get<SessionView[]>('/api/v1/settings/sessions')
     sessions.value = ss.data
-    prefs.value = pf.data
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
@@ -72,21 +61,6 @@ async function revokeOthers() {
   }
 }
 
-async function savePrefs() {
-  error.value = ''
-  notice.value = ''
-  try {
-    prefs.value = await api.patch<Record<string, string>>(
-      '/api/v1/settings/preferences', {
-        timezone: prefs.value.timezone || null,
-        default_sort: prefs.value.default_sort || null,
-      }).then((r) => r.data)
-    notice.value = '显示偏好已保存。'
-  } catch (e) {
-    error.value = (e as { message: string }).message
-  }
-}
-
 function fmt(t?: string): string {
   return t ? new Date(t).toLocaleString() : '—'
 }
@@ -95,7 +69,7 @@ function fmt(t?: string): string {
 <template>
   <section>
     <h1 class="page-title">设置</h1>
-    <p class="page-sub">账户安全与显示偏好。</p>
+    <p class="page-sub">账户安全。</p>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
     <p v-if="notice" class="ok-box" role="status">{{ notice }}</p>
@@ -133,25 +107,6 @@ function fmt(t?: string): string {
           </tbody>
         </table>
         <button class="btn sm ghost" @click="revokeOthers">退出其它会话</button>
-      </div>
-
-      <div class="card">
-        <h3>显示偏好</h3>
-        <div class="form-row">
-          <label>时区
-            <select v-model="prefs.timezone">
-              <option value="">跟随浏览器</option>
-              <option v-for="tz in TIMEZONES" :key="tz" :value="tz">{{ tz }}</option>
-            </select>
-          </label>
-          <label>结果列表默认排序
-            <select v-model="prefs.default_sort">
-              <option value="">默认（最新在前）</option>
-              <option v-for="s in SORTS" :key="s.value" :value="s.value">{{ s.label }}</option>
-            </select>
-          </label>
-          <button class="btn sm" @click="savePrefs">保存偏好</button>
-        </div>
       </div>
     </template>
   </section>

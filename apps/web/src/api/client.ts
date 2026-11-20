@@ -29,8 +29,20 @@ async function request<T>(
     })
     status = resp.status
     const text = await resp.text()
-    const body: unknown = text ? JSON.parse(text) : null
-    if (!resp.ok) throw new ApiError(mapError(status, body), status)
+    // 非 JSON 响应体（网关错误页/拦截页）不能当作网络失败掩盖真实状态：
+    // 解析失败时按 HTTP 状态映射错误，可诊断（P15 修复"网络暂时不可用"误报）。
+    let body: unknown = null
+    let parseOk = false
+    if (text) {
+      try {
+        body = JSON.parse(text)
+        parseOk = true
+      } catch {
+        body = null
+      }
+    }
+    if (!resp.ok) throw new ApiError(mapError(status, parseOk ? body : null), status)
+    if (text && !parseOk) throw new ApiError(mapError(null, null), null)
     return { data: body as T, status }
   } catch (e) {
     if (e instanceof ApiError) throw e
@@ -157,6 +169,7 @@ export interface BatchView {
   valid_count: number
   points_charged: number
   group_name: string | null
+  status_distribution?: Record<string, number>
   created_at: string
   updated_at: string
 }
@@ -244,4 +257,20 @@ export interface ImportAccepted {
   invalid_count: number
   points_charged: number
   free_count: number
+}
+
+// ---- 邀请好友（P15 脚手架；奖励结算依赖开放注册）----
+
+export interface InviteSummary {
+  code: string
+  invited_count: number
+  recharged_count: number
+  awarded_points: number
+}
+
+export interface InviteFriendView {
+  friend_email: string
+  status: string
+  points_awarded: number
+  created_at: string
 }

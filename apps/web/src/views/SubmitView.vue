@@ -198,7 +198,7 @@ function copyInvalid() {
       </ul>
       <p class="hint">本次提交已自动归入默认组；结果可在结果列表、组与批次中找回。</p>
       <div class="actions">
-        <RouterLink class="btn" :to="acceptedKind === 'import' ? '/imports' : '/results'">查看进度</RouterLink>
+        <RouterLink class="btn" :to="acceptedKind === 'import' ? '/imports' : `/results/batch/${(accepted as SubmissionAccepted).operation_id}`">查看进度</RouterLink>
         <RouterLink v-if="acceptedKind === 'import'" class="btn ghost" to="/imports">查看导入任务</RouterLink>
         <button class="btn ghost" @click="accepted = null; text = ''; fileName = null; estimate = null">继续提交</button>
         <RouterLink class="btn ghost" to="/dashboard">返回工作台</RouterLink>

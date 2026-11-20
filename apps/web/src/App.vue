@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { loadSession, session, clearSession } from './composables/session'
+import { loadSession, session, clearSession, lang, setLang } from './composables/session'
 import { connState, useSse } from './composables/sse'
 import pandaLogo from './assets/panda-logo.jpeg'
 
@@ -79,15 +79,14 @@ const connText = computed(() => {
         <div class="nav-group">查询</div>
         <RouterLink to="/submit">提交单号</RouterLink>
         <RouterLink to="/quick">临时快查</RouterLink>
-        <RouterLink to="/results">结果列表</RouterLink>
+        <RouterLink to="/results">我的查询</RouterLink>
         <RouterLink to="/stats">查询统计</RouterLink>
         <div class="nav-group">记录</div>
-        <RouterLink to="/submissions">提交记录</RouterLink>
-        <RouterLink to="/groups">组与批次</RouterLink>
         <RouterLink to="/imports">导入任务</RouterLink>
         <RouterLink to="/exports">导出任务</RouterLink>
         <div class="nav-group">账户</div>
         <RouterLink to="/wallet">积分中心</RouterLink>
+        <RouterLink to="/invite">邀请好友</RouterLink>
         <RouterLink to="/settings">设置</RouterLink>
         <div class="nav-group">帮助</div>
         <RouterLink to="/guide">使用指南</RouterLink>
@@ -103,6 +102,14 @@ const connText = computed(() => {
         <span v-if="session.me" class="topbar-balance" role="status">
           余额 <strong class="mono">{{ session.me.balance }}</strong> 积分
         </span>
+        <!-- 轨迹语言切换（P15）：只作用于轨迹描述机翻，界面文案仍为中文 -->
+        <label class="lang-pick">
+          <span aria-hidden="true">文A</span>
+          <select :value="lang" aria-label="轨迹语言" @change="setLang(($event.target as HTMLSelectElement).value)">
+            <option value="">中文</option>
+            <option value="en">English</option>
+          </select>
+        </label>
         <button class="btn ghost sm" @click="logout">退出登录</button>
       </header>
       <main class="ws-main">
@@ -211,6 +218,11 @@ a { color: var(--brand); }
 .conn-dot.offline .dot { background: var(--fg-soft); }
 .topbar-mail { color: var(--fg-soft); font-size: 14px; }
 .topbar-balance { font-size: 14px; }
+.lang-pick {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--fg-soft);
+}
+.lang-pick select { width: auto; padding: 4px 8px; font-size: 13px; min-height: 30px; }
 .ws-main { flex: 1; padding: 28px 24px 48px; max-width: 1280px; width: 100%; margin: 0 auto; }
 
 /* ===== 通用组件 ===== */

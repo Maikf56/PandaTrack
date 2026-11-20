@@ -20,8 +20,20 @@ const router = createRouter({
     { path: '/submit', name: 'submit', component: () => import('../views/SubmitView.vue'), meta: { auth: true } },
     { path: '/quick', name: 'quick', component: () => import('../views/QuickView.vue'), meta: { auth: true } },
     { path: '/dashboard', name: 'dashboard', component: () => import('../views/DashboardView.vue'), meta: { auth: true } },
+    // 结果三级导航（P15）：第一级查询组 → 第二级组内批次 → 第三级批次单号
     { path: '/results', name: 'results', component: () => import('../views/ResultsView.vue'), meta: { auth: true } },
-    { path: '/submissions', name: 'submissions', component: () => import('../views/SubmissionsView.vue'), meta: { auth: true } },
+    {
+      path: '/results/group/:id',
+      name: 'group-batches',
+      component: () => import('../views/GroupBatchesView.vue'),
+      meta: { auth: true },
+    },
+    {
+      path: '/results/batch/:id',
+      name: 'batch-trackings',
+      component: () => import('../views/BatchTrackingsView.vue'),
+      meta: { auth: true },
+    },
     {
       path: '/results/:id',
       name: 'tracking-detail',
@@ -29,12 +41,15 @@ const router = createRouter({
       meta: { auth: true },
     },
     { path: '/wallet', name: 'wallet', component: () => import('../views/WalletView.vue'), meta: { auth: true } },
-    // 次要页面（04 §5.8-5.12）
-    { path: '/groups', name: 'groups', component: () => import('../views/GroupsView.vue'), meta: { auth: true } },
+    // 次要页面（04 §5.8-5.12）+ 邀请好友（P15）
     { path: '/imports', name: 'imports', component: () => import('../views/ImportsView.vue'), meta: { auth: true } },
     { path: '/exports', name: 'exports', component: () => import('../views/ExportsView.vue'), meta: { auth: true } },
     { path: '/stats', name: 'stats', component: () => import('../views/StatsView.vue'), meta: { auth: true } },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { auth: true } },
+    { path: '/invite', name: 'invite', component: () => import('../views/InviteView.vue'), meta: { auth: true } },
+    // 合并/下线的旧路由 → 重定向（P15：提交记录并入积分流水；组页并入结果列表）
+    { path: '/submissions', redirect: '/wallet' },
+    { path: '/groups', redirect: '/results' },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFoundView.vue') },
   ],
 })
