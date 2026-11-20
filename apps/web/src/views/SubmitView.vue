@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { api, type SubmissionAccepted, type SubmissionEstimate, type ImportAccepted, type GroupView } from '../api/client'
 import { loadSession, loadStatusDict } from '../composables/session'
+import { t } from '../i18n'
 import { splitDraft, requestIdFor, clearRequestId } from '../logic/draft'
 
 // 提交单号（04 §5.4，G2 流程 1）：两步「输入与规则说明 → 受理结果」。
@@ -37,12 +38,10 @@ const isNonDefault = computed(() =>
 )
 const needConfirm = computed(() => isNonDefault.value || draft.value.totalLines > 1000)
 
-const resultReasonZh: Record<string, string> = {
-  empty: '空行',
-  too_long: '内容过长',
-  bad_chars: '包含无法安全识别的字符',
-  bad_format: '暂不支持的格式',
-  duplicate_in_request: '重复输入',
+/* 失败原因文案：submit.reason.* 词典；未知原因码原样显示 */
+function reasonText(reason: string): string {
+  const key = `submit.reason.${reason}`
+  return t(key) === key ? reason : t(key)
 }
 
 onMounted(async () => {
@@ -96,7 +95,7 @@ async function onFileChange(ev: Event) {
   const file = (ev.target as HTMLInputElement).files?.[0]
   if (!file) return
   if (file.size > 64 * 1024 * 1024) {
-    error.value = '文件超过 64 MB 上限，请拆分后分批上传'
+    error.value = t('submit.file_too_big')
     return
   }
   const content = await file.text()
@@ -171,102 +170,102 @@ async function doSubmit() {
 
 function copyInvalid() {
   const items = estimate.value?.invalid_items ?? []
-  const text2 = items.map((it) => `${it.line_no}: ${it.raw} (${resultReasonZh[it.reason] ?? it.reason})`).join('\n')
+  const text2 = items.map((it) => `${it.line_no}: ${it.raw} (${reasonText(it.reason)})`).join('\n')
   void navigator.clipboard?.writeText(text2)
 }
 </script>
 
 <template>
   <section>
-    <h1 class="page-title">提交单号</h1>
-    <p class="page-sub">粘贴或上传单号，服务端一次完成清洗、计费与受理；大批量自动进入导入任务。</p>
+    <h1 class="page-title">{{ t('submit.title') }}</h1>
+    <p class="page-sub">{{ t('submit.sub') }}</p>
 
     <!-- 受理卡（04 §5.4 第二步）：只显示服务端返回的实际结果 -->
     <div v-if="accepted" class="card accepted">
-      <p class="ok-box" role="status">已受理 — 查询结果将在后台逐步更新；关闭页面不会取消任务。</p>
-      <h3>本次受理</h3>
+      <p class="ok-box" role="status">{{ t('quick.accepted_msg') }}</p>
+      <h3>{{ t('quick.accepted_title') }}</h3>
       <ul class="kv">
         <li>
-          <span>{{ acceptedKind === 'import' ? '导入任务 ID' : '操作 ID' }}</span>
+          <span>{{ acceptedKind === 'import' ? t('quick.import_id') : t('quick.op_id') }}</span>
           <span class="mono">{{ acceptedKind === 'import' ? (accepted as ImportAccepted).import_job_id : (accepted as SubmissionAccepted).operation_id }}</span>
         </li>
-        <li><span>总条数</span><span class="mono">{{ accepted.total_count }}</span></li>
-        <li><span>可计费</span><span class="mono">{{ accepted.valid_count }}</span></li>
-        <li><span>免扣（30 天重复）</span><span class="mono">{{ accepted.free_count }}</span></li>
-        <li><span>不可计费</span><span class="mono">{{ accepted.invalid_count }}</span></li>
-        <li><span>本次实际扣费</span><span class="mono">{{ accepted.points_charged }} 积分</span></li>
+        <li><span>{{ t('quick.total_count') }}</span><span class="mono">{{ accepted.total_count }}</span></li>
+        <li><span>{{ t('quick.billable') }}</span><span class="mono">{{ accepted.valid_count }}</span></li>
+        <li><span>{{ t('quick.free') }}</span><span class="mono">{{ accepted.free_count }}</span></li>
+        <li><span>{{ t('quick.invalid') }}</span><span class="mono">{{ accepted.invalid_count }}</span></li>
+        <li><span>{{ t('quick.charged') }}</span><span class="mono">{{ accepted.points_charged }}{{ t('common.points_suffix') }}</span></li>
       </ul>
-      <p class="hint">本次提交已自动归入默认组；结果可在结果列表、组与批次中找回。</p>
+      <p class="hint">{{ t('submit.auto_group_hint') }}</p>
       <div class="actions">
-        <RouterLink class="btn" :to="acceptedKind === 'import' ? '/imports' : `/results/batch/${(accepted as SubmissionAccepted).operation_id}`">查看进度</RouterLink>
-        <RouterLink v-if="acceptedKind === 'import'" class="btn ghost" to="/imports">查看导入任务</RouterLink>
-        <button class="btn ghost" @click="accepted = null; text = ''; fileName = null; estimate = null">继续提交</button>
-        <RouterLink class="btn ghost" to="/dashboard">返回工作台</RouterLink>
+        <RouterLink class="btn" :to="acceptedKind === 'import' ? '/imports' : `/results/batch/${(accepted as SubmissionAccepted).operation_id}`">{{ t('common.view_progress') }}</RouterLink>
+        <RouterLink v-if="acceptedKind === 'import'" class="btn ghost" to="/imports">{{ t('nav.imports') }}</RouterLink>
+        <button class="btn ghost" @click="accepted = null; text = ''; fileName = null; estimate = null">{{ t('quick.continue') }}</button>
+        <RouterLink class="btn ghost" to="/dashboard">{{ t('common.back_dashboard') }}</RouterLink>
       </div>
     </div>
 
     <template v-else>
       <div class="card">
-        <label for="submit-input" class="field-label">输入 USPS 单号（每行一个，或上传文件）</label>
+        <label for="submit-input" class="field-label">{{ t('submit.input_label') }}</label>
         <textarea
           id="submit-input"
           v-model="text"
           class="big mono"
-          placeholder="9400 1000 0000 0000 0000 00&#10;每行一个单号；≤35 行即时受理，更大批量自动进入导入任务"
+          :placeholder="t('submit.placeholder')"
           :disabled="fileName !== null"
         ></textarea>
         <div class="file-row">
           <label class="file-btn">
             <input ref="fileInput" type="file" accept=".txt,.csv,text/plain" @change="onFileChange" />
-            上传文件（≤64 MB）
+            {{ t('submit.upload') }}
           </label>
           <span v-if="fileName" class="hint file-chip">
             {{ fileName }}
-            <button class="linklike" @click="removeFile">移除</button>
+            <button class="linklike" @click="removeFile">{{ t('submit.remove') }}</button>
           </span>
-          <span v-else class="hint">或直接在上方粘贴批量文本</span>
+          <span v-else class="hint">{{ t('submit.paste_hint') }}</span>
         </div>
 
         <p class="hint" role="status">
-          已接收 {{ draft.totalLines }} 行
-          <template v-if="draft.overLong.length">；第 {{ draft.overLong.join('、') }} 行超过 100 字符</template>
-          <template v-if="isBatch">；将走导入任务路径（结果在导入任务页查看进度）</template>
+          {{ t('common.received', { n: draft.totalLines }) }}
+          <template v-if="draft.overLong.length">{{ t('common.overlong', { lines: draft.overLong.join('、') }) }}</template>
+          <template v-if="isBatch">{{ t('submit.import_hint') }}</template>
         </p>
         <p v-if="overImportLimit" class="error-box" role="alert">
-          超过单次 {{ MAX_IMPORT_LINES.toLocaleString() }} 行上限，请拆分后分批提交
+          {{ t('submit.over_limit', { max: MAX_IMPORT_LINES.toLocaleString() }) }}
         </p>
 
         <!-- 目标组选择 -->
         <div v-if="groups.length" class="group-row">
-          <label for="target-group" class="field-label">目标组</label>
+          <label for="target-group" class="field-label">{{ t('submit.target_group') }}</label>
           <select id="target-group" v-model="targetGroupId">
             <option v-for="g in groups" :key="g.id" :value="g.id">
-              {{ g.name }}{{ g.is_default ? '（默认组）' : '' }} · {{ g.tracking_count }} 单
+              {{ g.name }}{{ g.is_default ? t('submit.default_group_tag') : '' }} · {{ g.tracking_count }}{{ t('submit.group_unit') }}
             </option>
           </select>
         </div>
 
         <!-- 实时解析面板（服务端预估接口；输入辅助，非预览步骤） -->
         <div v-if="estimate || estimating || estimateError" class="estimate-panel" aria-live="polite">
-          <template v-if="estimating">正在解析…</template>
+          <template v-if="estimating">{{ t('submit.parsing') }}</template>
           <template v-else-if="estimateError">
-            <p class="hint">{{ estimateError }}（预估不可用不影响提交，以受理结果为准）</p>
+            <p class="hint">{{ estimateError }}{{ t('submit.est_error_suffix') }}</p>
           </template>
           <template v-else-if="estimate">
             <div class="estimate-stats">
-              <span>总行数 <strong class="mono">{{ estimate.total_count }}</strong></span>
-              <span>可计费 <strong class="mono">{{ estimate.billable_count }}</strong></span>
-              <span>30 天内免扣 <strong class="mono">{{ estimate.free_count }}</strong></span>
-              <span>识别失败 <strong class="mono">{{ estimate.invalid_items.length > 0 ? estimate.invalid_items.length + '+' : estimate.invalid_items.length }}</strong></span>
+              <span>{{ t('submit.est_total') }} <strong class="mono">{{ estimate.total_count }}</strong></span>
+              <span>{{ t('submit.est_billable') }} <strong class="mono">{{ estimate.billable_count }}</strong></span>
+              <span>{{ t('submit.est_free') }} <strong class="mono">{{ estimate.free_count }}</strong></span>
+              <span>{{ t('submit.est_invalid') }} <strong class="mono">{{ estimate.invalid_items.length > 0 ? estimate.invalid_items.length + '+' : estimate.invalid_items.length }}</strong></span>
             </div>
             <details v-if="estimate.invalid_items.length">
-              <summary class="hint">识别失败明细（{{ estimate.invalid_items.length }} 条）</summary>
+              <summary class="hint">{{ t('submit.invalid_detail', { n: estimate.invalid_items.length }) }}</summary>
               <ul class="invalid-list">
                 <li v-for="it in estimate.invalid_items" :key="it.line_no">
-                  第 {{ it.line_no }} 行：<span class="mono">{{ it.raw }}</span>（{{ resultReasonZh[it.reason] ?? it.reason }}）
+                  {{ t('submit.invalid_line', { line: it.line_no, raw: it.raw, reason: reasonText(it.reason) }) }}
                 </li>
               </ul>
-              <button class="btn ghost sm" @click="copyInvalid">复制失败清单</button>
+              <button class="btn ghost sm" @click="copyInvalid">{{ t('submit.copy_invalid') }}</button>
             </details>
           </template>
         </div>
@@ -277,43 +276,43 @@ function copyInvalid() {
         <div class="cost-bar">
           <div class="cost-text" role="status">
             <template v-if="estimate">
-              将新增 <strong class="mono">{{ estimate.billable_count }}</strong> 单 ·
-              预估消耗 <strong class="mono">{{ estimate.points_estimate }}</strong> 积分 ·
-              其中 <strong class="mono">{{ estimate.free_count }}</strong> 单 30 天内免扣
-              <span class="hint">（当前余额 <span class="mono">{{ estimate.balance }}</span>）</span>
+              {{ t('submit.cost_will_add', { n: estimate.billable_count }) }}
+              {{ t('submit.cost_estimate', { n: estimate.points_estimate }) }}
+              {{ t('submit.cost_free', { n: estimate.free_count }) }}
+              <span class="hint">{{ t('submit.cost_balance', { n: estimate.balance }) }}</span>
               <span v-if="estimate.insufficient" class="insufficient">
-                余额不足，还差 <strong class="mono">{{ insufficientGap }}</strong> 积分
+                {{ t('submit.insufficient', { n: insufficientGap }) }}
               </span>
             </template>
-            <template v-else>输入单号后自动显示预估</template>
+            <template v-else>{{ t('submit.cost_idle') }}</template>
           </div>
           <div class="actions">
             <button class="btn" :disabled="!canSubmit" @click="onSubmitClick">
-              {{ submitting ? '提交中…' : '开始查询' }}
+              {{ submitting ? t('common.submitting') : t('common.start') }}
             </button>
             <button
               v-if="draft.totalLines > 0"
               class="btn ghost"
               @click="text = ''; fileName = null; estimate = null"
-            >清空</button>
+            >{{ t('common.clear') }}</button>
           </div>
-          <p class="hint">点击「开始查询」即提交并按规则扣费。费用规则：1 个新单号扣 1 积分，30 天内重复免扣，无效项不扣费；单次上限 1,000,000 条。预估仅供参考，以提交结果为准。</p>
+          <p class="hint">{{ t('submit.fee_note') }}</p>
         </div>
       </div>
 
       <!-- 防呆确认卡（04 §5.4）：大批量或非默认组；确认后仍走正常提交，不入账 -->
       <div v-if="pendingSubmit" class="modal-mask" @click.self="pendingSubmit = false">
-        <div class="modal card" role="dialog" aria-modal="true" aria-label="提交确认">
-          <h3>确认提交</h3>
+        <div class="modal card" role="dialog" aria-modal="true" :aria-label="t('submit.confirm_title')">
+          <h3>{{ t('submit.confirm_title') }}</h3>
           <ul class="kv">
-            <li><span>目标组</span><strong>{{ selectedGroup?.name ?? '默认组' }}</strong></li>
-            <li><span>条数</span><strong class="mono">{{ draft.totalLines }}</strong></li>
-            <li><span>预估积分</span><strong class="mono">{{ estimate?.points_estimate ?? '—' }}</strong></li>
+            <li><span>{{ t('submit.confirm_group') }}</span><strong>{{ selectedGroup?.name ?? t('submit.confirm_default') }}</strong></li>
+            <li><span>{{ t('submit.confirm_count') }}</span><strong class="mono">{{ draft.totalLines }}</strong></li>
+            <li><span>{{ t('submit.confirm_points') }}</span><strong class="mono">{{ estimate?.points_estimate ?? '—' }}</strong></li>
           </ul>
-          <p class="hint">本次提交为{{ isNonDefault ? '非默认目标组' : '大批量' }}提交，请核对以上信息。确认后立即按规则扣费。</p>
+          <p class="hint">{{ t('submit.confirm_hint', { kind: isNonDefault ? t('submit.kind_nongroup') : t('submit.kind_batch') }) }}</p>
           <div class="actions">
-            <button class="btn" @click="doSubmit">确认提交</button>
-            <button class="btn ghost" @click="pendingSubmit = false">再看看</button>
+            <button class="btn" @click="doSubmit">{{ t('submit.confirm_submit') }}</button>
+            <button class="btn ghost" @click="pendingSubmit = false">{{ t('submit.confirm_cancel') }}</button>
           </div>
         </div>
       </div>

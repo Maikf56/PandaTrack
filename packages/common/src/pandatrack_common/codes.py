@@ -23,6 +23,11 @@ class ErrorCode:
 UNAUTHORIZED = ErrorCode("unauthorized", "邮箱或密码不正确", 401)
 SESSION_EXPIRED = ErrorCode("session_expired", "登录已过期，请重新登录", 401)
 FORBIDDEN = ErrorCode("forbidden", "没有权限执行此操作", 403)
+# 开放注册（P16）：pending=待管理员审核；email_exists=重复注册。
+ACCOUNT_PENDING = ErrorCode(
+    "account_pending", "账号已创建，等待管理员审核通过后即可登录", 403
+)
+EMAIL_EXISTS = ErrorCode("email_exists", "该邮箱已注册", 409)
 
 # ---- 输入（09 分类 2）----
 INVALID_INPUT = ErrorCode("invalid_input", "提交的内容有误", 400)
@@ -50,7 +55,7 @@ INTERNAL_ERROR = ErrorCode("internal_error", "系统繁忙，请稍后再试", 5
 ALL_ERROR_CODES: dict[str, ErrorCode] = {
     e.code: e
     for e in (
-        UNAUTHORIZED, SESSION_EXPIRED, FORBIDDEN,
+        UNAUTHORIZED, SESSION_EXPIRED, FORBIDDEN, ACCOUNT_PENDING, EMAIL_EXISTS,
         INVALID_INPUT, REQUEST_TOO_LARGE, NOT_FOUND,
         IDEMPOTENCY_CONFLICT,
         INSUFFICIENT_POINTS, REDEMPTION_CODE_INVALID,

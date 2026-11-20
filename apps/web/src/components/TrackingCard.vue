@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { api, type TrackingView } from '../api/client'
 import { statusLabel } from '../composables/session'
+import { t } from '../i18n'
 
 // 可展开单号卡（P15 三级页面第三层，对齐竞品）：
 // 收起=单号+状态+最新事件；展开=完整轨迹时间线+统计行+检查更新。
@@ -22,16 +23,16 @@ const events = computed(() => {
 })
 const latest = computed(() => events.value[0])
 
-function fmtTime(t?: string | null): string {
-  if (!t) return '—'
-  const d = new Date(t)
+function fmtTime(s?: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s)
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function fmtShort(t?: string | null): string {
-  if (!t) return ''
-  const d = new Date(t)
-  return `${d.getMonth() + 1}月${d.getDate()}日`
+function fmtShort(s?: string | null): string {
+  if (!s) return ''
+  const d = new Date(s)
+  return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
 async function checkUpdate() {
@@ -42,8 +43,8 @@ async function checkUpdate() {
     const { data } = await api.post<{ customer_tracking_id: string; fresh: boolean; will_fetch: boolean }[]>(
       '/api/v1/check-updates', { customer_tracking_ids: [props.item.id] })
     feedback.value = data[0]?.fresh
-      ? '将沿用现有结果（未创建新查询任务）。'
-      : '已提交检查，结果在后台更新。'
+      ? t('card.fresh_reuse')
+      : t('card.fresh_check')
   } catch (e) {
     feedback.value = (e as { message: string }).message
   } finally {
@@ -64,25 +65,25 @@ async function copyNumber() {
       <span class="badge" :class="{ terminal: item.is_terminal }">
         {{ item.label_zh || statusLabel(item.status_key) }}
       </span>
-      <span class="desc">{{ latest?.description || latest?.label_zh || '暂无轨迹事件' }}</span>
+      <span class="desc">{{ latest?.description || latest?.label_zh || t('card.no_events') }}</span>
       <span class="hint time">{{ fmtShort(latest?.occurred_at) }}</span>
     </button>
 
     <div v-if="open" class="tcard-body">
       <div class="body-toolbar">
         <span class="hint">USPS</span>
-        <button class="linklike" @click="copyNumber">复制单号</button>
+        <button class="linklike" @click="copyNumber">{{ t('card.copy_number') }}</button>
         <button class="linklike" :disabled="checking" @click="checkUpdate">
-          {{ checking ? '检查中…' : '检查更新' }}
+          {{ checking ? t('card.checking') : t('common.check_update') }}
         </button>
-        <RouterLink class="linklike" :to="`/results/${item.id}`">详情页</RouterLink>
+        <RouterLink class="linklike" :to="`/results/${item.id}`">{{ t('card.detail_page') }}</RouterLink>
       </div>
       <p v-if="feedback" class="hint fb" role="status">{{ feedback }}</p>
 
       <div class="timeline-wrap">
-        <p class="hint tl-title">物流轨迹</p>
+        <p class="hint tl-title">{{ t('card.tl_title') }}</p>
         <p v-if="events.length === 0" class="hint" role="status">
-          暂时还没有可展示的轨迹事件；不代表包裹不存在。
+          {{ t('card.no_events_long') }}
         </p>
         <ol v-else class="timeline">
           <li v-for="(ev, i) in events" :key="i" :class="{ first: i === 0 }">
@@ -96,10 +97,10 @@ async function copyNumber() {
       </div>
 
       <div class="stats">
-        <div><span class="hint">原始状态</span><strong>{{ item.label_zh || statusLabel(item.status_key) }}</strong></div>
-        <div><span class="hint">查询次数</span><strong>—</strong></div>
-        <div><span class="hint">最后查询</span><strong>{{ fmtTime(item.last_success_at) }}</strong></div>
-        <div><span class="hint">创建时间</span><strong>{{ fmtTime(item.batch_created_at) }}</strong></div>
+        <div><span class="hint">{{ t('card.orig_status') }}</span><strong>{{ item.label_zh || statusLabel(item.status_key) }}</strong></div>
+        <div><span class="hint">{{ t('card.query_count') }}</span><strong>—</strong></div>
+        <div><span class="hint">{{ t('card.last_query') }}</span><strong>{{ fmtTime(item.last_success_at) }}</strong></div>
+        <div><span class="hint">{{ t('card.created') }}</span><strong>{{ fmtTime(item.batch_created_at) }}</strong></div>
       </div>
     </div>
   </div>

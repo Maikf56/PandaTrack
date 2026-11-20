@@ -18,10 +18,12 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin-customers"])
 
 
 @router.get("/customers")
-def list_customers(tenant_id: int | None = None, limit: int = 100, offset: int = 0,
+def list_customers(tenant_id: int | None = None, status: str = "",
+                   limit: int = 100, offset: int = 0,
                    admin=Depends(require_permission(P_CUSTOMERS_READ)),
                    repo: BRepository = Depends(get_repo)):
-    rows, total = repo.list_customers(tenant_id=tenant_id, limit=limit, offset=offset)
+    rows, total = repo.list_customers(tenant_id=tenant_id, status=status or None,
+                                      limit=limit, offset=offset)
     return {"items": rows, "total": total}
 
 
@@ -38,6 +40,7 @@ def update_customer_status(customer_id: int, status: str, reason: str = "",
     ok = repo.update_customer_status(customer_id, status)
     if not ok:
         raise ApiProblem(codes.NOT_FOUND)
+    # pending→active 即开放注册的"审核通过"动作（P16），复用同一审计动作。
     repo.write_audit(
         actor_id=admin["admin_id"], actor_role=admin["role"],
         action="customer_status_change", target=str(customer_id),

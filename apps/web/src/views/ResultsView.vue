@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, type GroupView } from '../api/client'
 import { loadSession } from '../composables/session'
+import { t } from '../i18n'
 import StatusDistBar from '../components/StatusDistBar.vue'
 
 // 结果列表 · 第一级（P15 三级导航，对齐竞品「我的查询」）：
@@ -52,10 +53,10 @@ async function reload() {
   }
 }
 
-function fmtDate(t?: string): string {
-  if (!t) return ''
-  const d = new Date(t)
-  return `创建于 ${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+function fmtDate(s?: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  return t('results.created_at', { date: `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}` })
 }
 
 async function createGroup() {
@@ -120,18 +121,18 @@ async function doDelete() {
   <section>
     <div class="title-row">
       <div>
-        <h1 class="page-title">我的查询</h1>
-        <p class="page-sub">按查询组管理所有查询：进度、批次、重查与导出。</p>
+        <h1 class="page-title">{{ t('results.title') }}</h1>
+        <p class="page-sub">{{ t('results.sub') }}</p>
       </div>
-      <button class="btn" @click="createOpen = true">＋ 新建查询组</button>
+      <button class="btn" @click="createOpen = true">{{ t('results.new_group') }}</button>
     </div>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
 
     <div v-else-if="groups.length === 0" class="card empty-state" role="status">
-      <p>还没有查询组。提交第一批单号后会自动创建默认组。</p>
-      <RouterLink class="btn" to="/submit">去提交第一批单号</RouterLink>
+      <p>{{ t('results.group_empty') }}</p>
+      <RouterLink class="btn" to="/submit">{{ t('results.empty_cta') }}</RouterLink>
     </div>
 
     <div v-else class="groups">
@@ -145,62 +146,61 @@ async function doDelete() {
       >
         <div class="gcard-head">
           <span class="g-name">{{ g.name }}</span>
-          <span v-if="g.is_default" class="badge">默认</span>
-          <span v-if="g.archived" class="badge warn">已归档</span>
-          <span class="meta">{{ g.tracking_count }} 个单号 · {{ g.batch_count }} 批次</span>
+          <span v-if="g.is_default" class="badge">{{ t('results.default_badge') }}</span>
+          <span v-if="g.archived" class="badge warn">{{ t('results.archived_badge') }}</span>
+          <span class="meta">{{ t('results.group_meta', { t: g.tracking_count, b: g.batch_count }) }}</span>
           <span class="spacer"></span>
           <button
             class="linklike act" role="button"
             @click.stop="openRename(g)"
-          >重命名</button>
+          >{{ t('results.rename') }}</button>
           <button
             class="linklike act danger" role="button"
             @click.stop="openDelete(g)"
-          >删除</button>
+          >{{ t('results.delete') }}</button>
         </div>
         <StatusDistBar :distribution="g.status_distribution" :total="g.tracking_count" />
         <div class="gcard-foot">
           <span class="hint">{{ fmtDate(g.created_at) }}</span>
-          <span class="hint enter">查看批次 ›</span>
+          <span class="hint enter">{{ t('results.view_batches') }}</span>
         </div>
       </div>
     </div>
 
     <!-- 新建组 -->
     <div v-if="createOpen" class="modal-mask" @click.self="createOpen = false">
-      <div class="modal card" role="dialog" aria-modal="true" aria-label="新建查询组">
-        <h3>新建查询组</h3>
-        <input v-model="newName" placeholder="组名（如：黄总12）" maxlength="50" @keydown.enter.prevent="createGroup" />
+      <div class="modal card" role="dialog" aria-modal="true" :aria-label="t('results.create_title')">
+        <h3>{{ t('results.create_title') }}</h3>
+        <input v-model="newName" :placeholder="t('results.name_placeholder')" maxlength="50" @keydown.enter.prevent="createGroup" />
         <div class="actions">
-          <button class="btn" :disabled="!newName.trim() || busy" @click="createGroup">创建</button>
-          <button class="btn ghost" @click="createOpen = false">取消</button>
+          <button class="btn" :disabled="!newName.trim() || busy" @click="createGroup">{{ t('results.create_btn') }}</button>
+          <button class="btn ghost" @click="createOpen = false">{{ t('common.cancel') }}</button>
         </div>
       </div>
     </div>
 
     <!-- 重命名 -->
     <div v-if="renameTarget" class="modal-mask" @click.self="renameTarget = null">
-      <div class="modal card" role="dialog" aria-modal="true" aria-label="重命名查询组">
-        <h3>重命名「{{ renameTarget.name }}」</h3>
+      <div class="modal card" role="dialog" aria-modal="true" :aria-label="t('results.rename')">
+        <h3>{{ t('results.rename_title', { name: renameTarget.name }) }}</h3>
         <input v-model="renameName" maxlength="50" @keydown.enter.prevent="doRename" />
         <div class="actions">
-          <button class="btn" :disabled="!renameName.trim() || busy" @click="doRename">保存</button>
-          <button class="btn ghost" @click="renameTarget = null">取消</button>
+          <button class="btn" :disabled="!renameName.trim() || busy" @click="doRename">{{ t('results.save') }}</button>
+          <button class="btn ghost" @click="renameTarget = null">{{ t('common.cancel') }}</button>
         </div>
       </div>
     </div>
 
     <!-- 删除确认（危险操作语义：只清组织关系，事实与账务保留） -->
     <div v-if="deleteTarget" class="modal-mask" @click.self="deleteTarget = null">
-      <div class="modal card" role="dialog" aria-modal="true" aria-label="删除查询组">
-        <h3>删除「{{ deleteTarget.name }}」？</h3>
+      <div class="modal card" role="dialog" aria-modal="true" :aria-label="t('results.delete')">
+        <h3>{{ t('results.delete_title', { name: deleteTarget.name }) }}</h3>
         <p class="hint">
-          组内 {{ deleteTarget.tracking_count }} 个单号的查询结果与账务记录都会保留，
-          只清除本组的归属关系；可重新提交后归入其他组。
+          {{ t('results.delete_hint', { n: deleteTarget.tracking_count }) }}
         </p>
         <div class="actions">
-          <button class="btn danger" :disabled="busy" @click="doDelete">确认删除</button>
-          <button class="btn ghost" @click="deleteTarget = null">取消</button>
+          <button class="btn danger" :disabled="busy" @click="doDelete">{{ t('results.delete_confirm') }}</button>
+          <button class="btn ghost" @click="deleteTarget = null">{{ t('common.cancel') }}</button>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { api, type StatsView } from '../api/client'
 import { loadStatusDict, statusLabel } from '../composables/session'
+import { t } from '../i18n'
 
 // 查询统计（04 §5.10）：只展示服务端口径的客户自己的历史汇总。
 const stats = ref<StatsView | null>(null)
@@ -44,48 +45,48 @@ const maxDaily = computed(() =>
 
 <template>
   <section>
-    <h1 class="page-title">查询统计</h1>
-    <p class="page-sub">你的历史查询汇总与状态分布；统计口径由服务端计算，前端不做推算。</p>
+    <h1 class="page-title">{{ t('stats.title') }}</h1>
+    <p class="page-sub">{{ t('stats.sub') }}</p>
 
     <div class="card range">
-      <label>统计范围
+      <label>{{ t('stats.range') }}
         <select v-model.number="days" @change="load">
-          <option :value="7">最近 7 天</option>
-          <option :value="30">最近 30 天</option>
-          <option :value="90">最近 90 天</option>
-          <option :value="365">最近一年</option>
+          <option :value="7">{{ t('stats.days7') }}</option>
+          <option :value="30">{{ t('stats.days30') }}</option>
+          <option :value="90">{{ t('stats.days90') }}</option>
+          <option :value="365">{{ t('stats.days365') }}</option>
         </select>
       </label>
     </div>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
 
     <template v-else-if="stats">
       <div class="cards-row">
         <div class="card stat">
-          <p class="stat-label">提交次数</p>
+          <p class="stat-label">{{ t('stats.stat.submissions') }}</p>
           <p class="stat-num">{{ stats.submissions }}</p>
         </div>
         <div class="card stat">
-          <p class="stat-label">查询单号数</p>
+          <p class="stat-label">{{ t('stats.stat.trackings') }}</p>
           <p class="stat-num">{{ stats.tracking_count }}</p>
         </div>
         <div class="card stat">
-          <p class="stat-label">实际扣费</p>
-          <p class="stat-num">{{ stats.points_charged }} 积分</p>
+          <p class="stat-label">{{ t('stats.stat.charged') }}</p>
+          <p class="stat-num">{{ stats.points_charged }}{{ t('common.points_suffix') }}</p>
         </div>
         <div class="card stat">
-          <p class="stat-label">30 天内免扣</p>
+          <p class="stat-label">{{ t('stats.stat.waived') }}</p>
           <p class="stat-num">{{ stats.waived_count }}</p>
         </div>
       </div>
 
       <div class="card">
-        <h3>状态分布（全部在跟踪单号）</h3>
-        <p v-if="distribution.length === 0" class="hint">还没有查询结果。</p>
+        <h3>{{ t('stats.dist_title') }}</h3>
+        <p v-if="distribution.length === 0" class="hint">{{ t('stats.no_dist') }}</p>
         <table v-else class="list">
-          <thead><tr><th>状态</th><th>数量</th></tr></thead>
+          <thead><tr><th>{{ t('common.th.status') }}</th><th>{{ t('stats.th.count') }}</th></tr></thead>
           <tbody>
             <tr v-for="d in distribution" :key="d.key">
               <td><span class="badge">{{ d.label }}</span></td>
@@ -96,9 +97,9 @@ const maxDaily = computed(() =>
       </div>
 
       <div class="card">
-        <h3>提交趋势</h3>
-        <p v-if="stats.daily.length === 0" class="hint">该时间段内没有提交记录。</p>
-        <ul v-else class="bars" role="img" aria-label="按日提交次数条形图">
+        <h3>{{ t('stats.trend_title') }}</h3>
+        <p v-if="stats.daily.length === 0" class="hint">{{ t('stats.no_daily') }}</p>
+        <ul v-else class="bars" role="img" :aria-label="t('stats.bars_aria')">
           <li v-for="d in stats.daily" :key="d.date">
             <span class="bar" :style="{ height: `${(d.submissions / maxDaily) * 100}%` }"></span>
             <span class="bar-label">{{ d.date.slice(5) }}</span>

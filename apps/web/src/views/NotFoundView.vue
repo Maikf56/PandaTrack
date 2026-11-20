@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { t } from '../i18n'
 const router = useRouter()
 </script>
 
 <template>
   <section class="nf">
-    <h1 class="page-title">页面不存在</h1>
-    <p class="page-sub">你要访问的页面不存在或已被移动。</p>
-    <button class="btn" @click="router.push({ name: 'home' })">返回首页</button>
+    <h1 class="page-title">{{ t('nf.title') }}</h1>
+    <p class="page-sub">{{ t('nf.sub') }}</p>
+    <button class="btn" @click="router.push({ name: 'home' })">{{ t('nf.back') }}</button>
   </section>
 </template>

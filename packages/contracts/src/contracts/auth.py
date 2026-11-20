@@ -32,3 +32,19 @@ class AuthMeResponse(BaseModel):
     role: str
     tenant_id: str | None = None
     balance: int = Field(ge=0)
+
+
+class RegisterRequest(BaseModel):
+    """开放注册（P16）：注册即建号，status=pending，管理员审核通过后才可登录。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    client_request_id: str = Field(min_length=8, max_length=50)
+
+
+class RegisterResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "pending"   # 恒为 pending：审核由管理端完成

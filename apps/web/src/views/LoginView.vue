@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/client'
 import { loadSession, session } from '../composables/session'
+import { t } from '../i18n'
 import { newRequestId } from '../logic/draft'
 
 // 登录（04 §5.2）：只留邮箱/密码/登录/忘记密码/试用入口；失败显示白话错误。
@@ -31,7 +32,7 @@ async function submit() {
   if (submitting.value) return
   error.value = ''
   if (!email.value || password.value.length < 8) {
-    error.value = '请输入邮箱和至少 8 位的密码'
+    error.value = t('login.err_short')
     return
   }
   submitting.value = true
@@ -60,22 +61,24 @@ async function submit() {
 <template>
   <section class="login-wrap">
     <div class="card login-card">
-      <h1 class="page-title">登录</h1>
-      <p class="page-sub">建立客户会话；会话经 HttpOnly Cookie 保持。</p>
+      <h1 class="page-title">{{ t('login.title') }}</h1>
+      <p class="page-sub">{{ t('login.sub') }}</p>
       <form @submit.prevent="submit">
-        <label for="login-email">邮箱</label>
+        <label for="login-email">{{ t('login.email') }}</label>
         <input id="login-email" v-model="email" type="email" autocomplete="email" required />
-        <label for="login-pw">密码</label>
+        <label for="login-pw">{{ t('login.password') }}</label>
         <input id="login-pw" v-model="password" type="password" autocomplete="current-password" required />
         <p v-if="error" class="error-box" role="alert">{{ error }}</p>
-        <button class="btn" type="submit" :disabled="submitting">
-          {{ submitting ? '登录中…' : '登录' }}
+        <button class="btn login-btn" type="submit" :disabled="submitting">
+          {{ submitting ? t('login.submitting') : t('login.title') }}
         </button>
       </form>
       <p class="hint links">
-        <RouterLink to="/forgot">忘记密码</RouterLink>
+        <RouterLink to="/forgot">{{ t('login.forgot') }}</RouterLink>
         ·
-        <RouterLink to="/trial">申请试用</RouterLink>
+        <RouterLink to="/register">{{ t('login.to_register') }}</RouterLink>
+        ·
+        <RouterLink to="/trial">{{ t('nav.trial') }}</RouterLink>
       </p>
     </div>
   </section>
@@ -85,5 +88,7 @@ async function submit() {
 .login-wrap { display: flex; justify-content: center; }
 .login-card { width: 100%; max-width: 420px; }
 label { display: block; font-weight: 600; margin: 14px 0 6px; }
+/* 登录按钮与输入框拉开间距：全宽 + 上边距，链接组独立成行（P16 反馈） */
+.login-btn { width: 100%; margin-top: 22px; }
 .links { margin-top: 16px; text-align: center; }
 </style>

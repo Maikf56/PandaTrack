@@ -101,12 +101,20 @@ function closeDrawer() {
   drawerAudit.value = []
 }
 
-// ---- 状态变更（冻结/恢复，理由必填 + 审计）----
+// ---- 状态变更（冻结/恢复/审核，理由必填 + 审计）----
 function openStatusDialog(row: CustomerRow, status: 'active' | 'suspended' | 'deleted') {
   statusTarget.value = row
   nextStatus.value = status
   reason.value = ''
 }
+
+// 审核场景的语义化按钮文案（pending→active 是"通过审核"而非"恢复"）
+const statusActionLabel = computed(() => {
+  if (nextStatus.value === 'active') {
+    return statusTarget.value?.status === 'pending' ? '通过审核' : '恢复'
+  }
+  return statusTarget.value?.status === 'pending' ? '驳回申请' : '冻结'
+})
 
 async function submitStatus() {
   if (!statusTarget.value || !reason.value.trim()) {
@@ -170,10 +178,10 @@ async function submitAdjust() {
 }
 
 const statusBadgeClass: Record<string, string> = {
-  active: 'ok', suspended: 'warn', deleted: 'err',
+  active: 'ok', suspended: 'warn', deleted: 'err', pending: 'warn',
 }
 const statusLabelZh: Record<string, string> = {
-  active: '正常', suspended: '已冻结', deleted: '已删除',
+  active: '正常', suspended: '已冻结', deleted: '已删除', pending: '待审核',
 }
 const ledgerTypeZh: Record<string, string> = {
   charge: '提交扣费', topup: '充值', bonus: '赠送', adjust: '人工调整', reversal: '冲正/退款',
@@ -207,6 +215,7 @@ function fmtTime(v: string | null): string {
         <label for="cust-status" class="field-label">状态</label>
         <select id="cust-status" v-model="statusFilter">
           <option value="">全部</option>
+          <option value="pending">待审核</option>
           <option value="active">正常</option>
           <option value="suspended">已冻结</option>
           <option value="deleted">已删除</option>
@@ -279,7 +288,16 @@ function fmtTime(v: string | null): string {
 
         <div v-if="canWrite" class="drawer-actions">
           <button class="btn sm" @click="openAdjust">调整积分</button>
-          <button v-if="drawerCustomer.status === 'active'"
+          <!-- 待审核（开放注册）：通过 = 置 active；驳回 = 置 suspended -->
+          <template v-if="drawerCustomer.status === 'pending'">
+            <button class="btn sm" @click="openStatusDialog(drawerCustomer, 'active')">
+              通过审核
+            </button>
+            <button class="btn ghost sm" @click="openStatusDialog(drawerCustomer, 'suspended')">
+              驳回申请
+            </button>
+          </template>
+          <button v-else-if="drawerCustomer.status === 'active'"
                   class="btn ghost sm" @click="openStatusDialog(drawerCustomer, 'suspended')">
             冻结客户
           </button>
@@ -327,7 +345,7 @@ function fmtTime(v: string | null): string {
     <!-- 状态变更确认（03 §3.1：记录操作者、对象、理由、前后状态） -->
     <div v-if="statusTarget" class="modal-mask" @click.self="statusTarget = null">
       <div class="modal card" role="dialog" aria-modal="true" aria-label="客户状态变更确认">
-        <h3>确认{{ nextStatus === 'active' ? '恢复' : '冻结' }}客户</h3>
+        <h3>确认{{ statusActionLabel }}客户</h3>
         <ul class="kv">
           <li><span>客户</span><span class="mono">{{ statusTarget.email }}</span></li>
           <li><span>当前状态</span><span>{{ statusLabelZh[statusTarget.status] }}</span></li>

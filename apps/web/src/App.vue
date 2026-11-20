@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadSession, session, clearSession, lang, setLang } from './composables/session'
 import { connState, useSse } from './composables/sse'
+import { t, locale, toggleLocale } from './i18n'
 import pandaLogo from './assets/panda-logo.jpeg'
 
 const route = useRoute()
@@ -33,84 +34,98 @@ async function logout() {
 
 /* 连接状态指示器（04 §8.2）：live/polling/offline 三态小圆点，配文字不靠颜色。 */
 const connText = computed(() => {
-  if (connState.value === 'live') return '实时'
-  if (connState.value === 'polling') return '轮询'
-  return '离线'
+  if (connState.value === 'live') return t('conn.live')
+  if (connState.value === 'polling') return t('conn.polling')
+  return t('conn.offline')
 })
+
+/* 整站语言切换：zh↔en（i18n/index.ts 静态词典） */
+const langBtnLabel = computed(() => (locale.value === 'zh' ? 'EN' : '中文'))
 </script>
 
 <template>
   <!-- 公共区轻量导航；工作台用 左侧导航+顶部账户栏（04 §4.1/§4.2） -->
   <div v-if="!isWorkspace" class="pub-shell">
     <header class="pub-nav">
-      <RouterLink to="/" class="brand">
-        <img :src="pandaLogo" alt="PandaTrack LOGO" class="brand-logo" />
-        <span class="brand-name">PandaTracking</span>
+      <RouterLink to="/" class="brand" aria-label="PandaTracking 首页">
+        <img :src="pandaLogo" alt="PandaTracking" class="brand-logo" />
       </RouterLink>
       <nav>
-        <RouterLink to="/products">产品说明</RouterLink>
-        <RouterLink to="/pricing">积分套餐</RouterLink>
-        <RouterLink to="/guide">使用指南</RouterLink>
+        <RouterLink to="/products">{{ t('nav.products') }}</RouterLink>
+        <RouterLink to="/pricing">{{ t('nav.pricing') }}</RouterLink>
+        <RouterLink to="/guide">{{ t('nav.guide') }}</RouterLink>
         <template v-if="!isLoggedIn">
-          <RouterLink to="/login">登录</RouterLink>
-          <RouterLink to="/trial" class="nav-cta">申请试用</RouterLink>
+          <RouterLink to="/trial">{{ t('nav.trial') }}</RouterLink>
+          <RouterLink to="/login">{{ t('nav.login') }}</RouterLink>
+          <RouterLink to="/register" class="nav-cta">{{ t('nav.register') }}</RouterLink>
         </template>
         <template v-else>
-          <RouterLink to="/dashboard">工作台</RouterLink>
-          <button class="linklike" @click="logout">退出</button>
+          <RouterLink to="/dashboard">{{ t('nav.dashboard') }}</RouterLink>
+          <button class="linklike" @click="logout">{{ t('nav.logout') }}</button>
         </template>
+        <button
+          class="linklike lang-toggle"
+          :title="t('lang.toggle_title')"
+          :aria-label="t('lang.toggle_title')"
+          @click="toggleLocale"
+        >{{ langBtnLabel }}</button>
       </nav>
     </header>
     <main class="pub-main">
       <RouterView />
     </main>
     <footer class="pub-footer">
-      正式环境只展示已取得的真实 USPS 结果；查询结果在后台逐步更新。
+      {{ t('footer.note') }}
     </footer>
   </div>
 
   <div v-else class="ws-shell">
     <aside class="ws-nav">
-      <RouterLink to="/dashboard" class="brand">
-        <img :src="pandaLogo" alt="PandaTrack LOGO" class="brand-logo" />
-        <span class="brand-name">PandaTracking</span>
+      <RouterLink to="/dashboard" class="brand" aria-label="PandaTracking 工作台">
+        <img :src="pandaLogo" alt="PandaTracking" class="brand-logo" />
       </RouterLink>
       <nav>
-        <div class="nav-group">查询</div>
-        <RouterLink to="/submit">提交单号</RouterLink>
-        <RouterLink to="/quick">临时快查</RouterLink>
-        <RouterLink to="/results">我的查询</RouterLink>
-        <RouterLink to="/stats">查询统计</RouterLink>
-        <div class="nav-group">记录</div>
-        <RouterLink to="/imports">导入任务</RouterLink>
-        <RouterLink to="/exports">导出任务</RouterLink>
-        <div class="nav-group">账户</div>
-        <RouterLink to="/wallet">积分中心</RouterLink>
-        <RouterLink to="/invite">邀请好友</RouterLink>
-        <RouterLink to="/settings">设置</RouterLink>
-        <div class="nav-group">帮助</div>
-        <RouterLink to="/guide">使用指南</RouterLink>
-        <RouterLink to="/products">产品说明</RouterLink>
+        <div class="nav-group">{{ t('nav.group.query') }}</div>
+        <RouterLink to="/submit">{{ t('nav.submit') }}</RouterLink>
+        <RouterLink to="/quick">{{ t('nav.quick') }}</RouterLink>
+        <RouterLink to="/results">{{ t('nav.results') }}</RouterLink>
+        <RouterLink to="/stats">{{ t('nav.stats') }}</RouterLink>
+        <div class="nav-group">{{ t('nav.group.records') }}</div>
+        <RouterLink to="/imports">{{ t('nav.imports') }}</RouterLink>
+        <RouterLink to="/exports">{{ t('nav.exports') }}</RouterLink>
+        <div class="nav-group">{{ t('nav.group.account') }}</div>
+        <RouterLink to="/wallet">{{ t('nav.wallet') }}</RouterLink>
+        <RouterLink to="/invite">{{ t('nav.invite') }}</RouterLink>
+        <RouterLink to="/settings">{{ t('nav.settings') }}</RouterLink>
+        <div class="nav-group">{{ t('nav.group.help') }}</div>
+        <RouterLink to="/guide">{{ t('nav.guide') }}</RouterLink>
+        <RouterLink to="/products">{{ t('nav.products') }}</RouterLink>
       </nav>
     </aside>
     <div class="ws-body">
       <header class="ws-topbar">
-        <span class="conn-dot" :class="connState" :title="`连接状态：${connText}`">
+        <span class="conn-dot" :class="connState" :title="t('conn.title', { state: connText })">
           <span class="dot" aria-hidden="true"></span>{{ connText }}
         </span>
         <span v-if="session.me" class="topbar-mail">{{ session.me.email }}</span>
         <span v-if="session.me" class="topbar-balance" role="status">
-          余额 <strong class="mono">{{ session.me.balance }}</strong> 积分
+          {{ t('topbar.balance', { balance: session.me.balance }) }}
         </span>
-        <!-- 轨迹语言切换（P15）：只作用于轨迹描述机翻，界面文案仍为中文 -->
+        <!-- 轨迹语言切换（P15）：只作用于轨迹描述机翻，界面文案由 i18n 词典负责 -->
         <label class="lang-pick">
           <span aria-hidden="true">文A</span>
-          <select :value="lang" aria-label="轨迹语言" @change="setLang(($event.target as HTMLSelectElement).value)">
-            <option value="">中文</option>
-            <option value="en">English</option>
+          <select :value="lang" :aria-label="t('track.lang')" @change="setLang(($event.target as HTMLSelectElement).value)">
+            <option value="">{{ t('track.lang_orig') }}</option>
+            <option value="zh">{{ t('track.lang_zh') }}</option>
           </select>
         </label>
-        <button class="btn ghost sm" @click="logout">退出登录</button>
+        <button
+          class="btn ghost sm lang-toggle"
+          :title="t('lang.toggle_title')"
+          :aria-label="t('lang.toggle_title')"
+          @click="toggleLocale"
+        >{{ langBtnLabel }}</button>
+        <button class="btn ghost sm" @click="logout">{{ t('nav.logout_full') }}</button>
       </header>
       <main class="ws-main">
         <RouterView />
@@ -162,7 +177,6 @@ body {
   text-decoration: none; color: var(--fg);
 }
 .brand-logo { width: 132px; height: auto; display: block; }
-.brand-name { font-weight: 700; font-size: 18px; color: var(--fg); letter-spacing: -0.2px; }
 .linklike { background: none; border: none; color: var(--fg-soft); cursor: pointer; font: inherit; padding: 0; }
 a { color: var(--brand); }
 

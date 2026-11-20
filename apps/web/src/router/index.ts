@@ -7,6 +7,8 @@ const router = createRouter({
     // 公共区（04 §2.1 八路由）
     { path: '/', name: 'home', component: () => import('../views/HomeView.vue') },
     { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+    // 注册（P16）：开放注册 + 管理员审核后才能登录
+    { path: '/register', name: 'register', component: () => import('../views/RegisterView.vue') },
     { path: '/products', name: 'products', component: () => import('../views/ProductsView.vue') },
     { path: '/pricing', name: 'pricing', component: () => import('../views/PricingView.vue') },
     { path: '/trial', name: 'trial', component: () => import('../views/TrialView.vue') },

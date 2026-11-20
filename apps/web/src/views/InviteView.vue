@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { api, type InviteSummary, type InviteFriendView } from '../api/client'
 import { loadSession } from '../composables/session'
+import { t } from '../i18n'
 
 // 邀请好友（P15 脚手架）：邀请码/链接/统计/好友列表。
 // 奖励结算依赖开放注册——当前无公开注册入口，统计恒为 0，文案如实说明。
@@ -44,7 +45,7 @@ async function regenerate() {
   notice.value = ''
   try {
     summary.value = (await api.post<InviteSummary>('/api/v1/invites/regenerate')).data
-    notice.value = '已生成新的邀请码，旧邀请码立即失效。'
+    notice.value = t('invite.reset_done')
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
@@ -54,70 +55,70 @@ async function regenerate() {
 
 async function copy(text: string) {
   await navigator.clipboard?.writeText(text)
-  notice.value = '已复制到剪贴板。'
+  notice.value = t('invite.copied')
 }
 
-function fmt(t?: string): string {
-  return t ? new Date(t).toLocaleString() : '—'
+function fmt(s?: string): string {
+  return s ? new Date(s).toLocaleString() : '—'
 }
 </script>
 
 <template>
   <section>
-    <h1 class="page-title">邀请好友</h1>
-    <p class="page-sub">分享邀请码或链接，好友注册后你将获得积分奖励。</p>
+    <h1 class="page-title">{{ t('invite.title') }}</h1>
+    <p class="page-sub">{{ t('invite.sub') }}</p>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
     <p v-if="notice" class="ok-box" role="status">{{ notice }}</p>
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
 
     <template v-else-if="summary">
       <div class="card">
-        <h3>我的邀请码</h3>
+        <h3>{{ t('invite.code_title') }}</h3>
         <p class="hint rule">
-          计划规则（注册开放后自动生效）：好友注册并领取体验积分后，你获得
-          <strong>1000 积分</strong>一次性奖励；好友每次充值可按充值金额的
-          <strong>10%</strong> 获得积分返利（赠送积分不计入）。
+          {{ t('invite.rule') }}
+          <strong>{{ 1000 }}{{ t('invite.bonus_points') }}</strong>{{ t('invite.rule_bonus') }}
+          <strong>10%</strong> {{ t('invite.rule_percent') }}
         </p>
         <p class="hint warn-note">
-          ⓘ 奖励结算依赖「开放注册」——当前账号由管理员开通，以下统计暂时为 0。
+          {{ t('invite.warn') }}
         </p>
         <div class="code-row">
           <div class="field">
-            <span class="hint">邀请码</span>
+            <span class="hint">{{ t('invite.code') }}</span>
             <input :value="summary.code" readonly class="mono" />
           </div>
           <div class="field grow">
-            <span class="hint">邀请链接</span>
+            <span class="hint">{{ t('invite.link') }}</span>
             <input :value="link" readonly class="mono" />
           </div>
           <div class="btn-col">
-            <button class="btn sm" @click="copy(summary.code)">复制码</button>
-            <button class="btn sm ghost" @click="copy(link)">复制链接</button>
+            <button class="btn sm" @click="copy(summary.code)">{{ t('invite.copy_code') }}</button>
+            <button class="btn sm ghost" @click="copy(link)">{{ t('invite.copy_link') }}</button>
           </div>
         </div>
         <button class="btn ghost sm" :disabled="busy" @click="regenerate">
-          {{ busy ? '生成中…' : '重置邀请码' }}
+          {{ busy ? t('exports.generating') : t('invite.reset') }}
         </button>
       </div>
 
       <div class="stat-grid">
-        <div class="card stat"><span class="hint">已邀请好友</span><strong class="mono">{{ summary.invited_count }}</strong></div>
-        <div class="card stat"><span class="hint">已充值好友</span><strong class="mono">{{ summary.recharged_count }}</strong></div>
-        <div class="card stat"><span class="hint">累计获得积分</span><strong class="mono">{{ summary.awarded_points }}</strong></div>
+        <div class="card stat"><span class="hint">{{ t('invite.stat_invited') }}</span><strong class="mono">{{ summary.invited_count }}</strong></div>
+        <div class="card stat"><span class="hint">{{ t('invite.stat_recharged') }}</span><strong class="mono">{{ summary.recharged_count }}</strong></div>
+        <div class="card stat"><span class="hint">{{ t('invite.stat_points') }}</span><strong class="mono">{{ summary.awarded_points }}</strong></div>
       </div>
 
       <div class="card">
-        <h3>好友列表</h3>
+        <h3>{{ t('invite.friends_title') }}</h3>
         <p v-if="friends.length === 0" class="hint" role="status">
-          还没有好友通过你的邀请注册。
+          {{ t('invite.no_friends') }}
         </p>
         <table v-else class="list">
-          <thead><tr><th>好友邮箱</th><th>状态</th><th>你获得的奖励</th><th>注册时间</th></tr></thead>
+          <thead><tr><th>{{ t('invite.th.email') }}</th><th>{{ t('invite.th.status') }}</th><th>{{ t('invite.th.reward') }}</th><th>{{ t('invite.th.signed_up_at') }}</th></tr></thead>
           <tbody>
             <tr v-for="f in friends" :key="f.friend_email">
               <td>{{ f.friend_email }}</td>
-              <td><span class="badge">{{ f.status === 'recharged' ? '已充值' : f.status === 'joined' ? '已注册' : '待注册' }}</span></td>
+              <td><span class="badge">{{ f.status === 'recharged' ? t('invite.status.recharged') : f.status === 'joined' ? t('invite.status.joined') : t('invite.status.pending') }}</span></td>
               <td>{{ f.points_awarded }}</td>
               <td>{{ fmt(f.created_at) }}</td>
             </tr>

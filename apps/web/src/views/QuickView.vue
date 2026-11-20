@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { api, type SubmissionAccepted, type TrackingView } from '../api/client'
 import { loadSession, loadStatusDict, lang } from '../composables/session'
+import { t } from '../i18n'
 import { splitDraft, requestIdFor, clearRequestId, MAX_LINES } from '../logic/draft'
 import StatusDistBar from '../components/StatusDistBar.vue'
 import TrackingCard from '../components/TrackingCard.vue'
@@ -118,9 +119,9 @@ const dist = computed(() => {
 })
 
 const stateText = computed(() => {
-  if (items.value.length === 0) return '正在查询，结果会逐步更新…'
-  if (polling.value) return `查询中 — 已完结 ${terminalCount.value} / ${items.value.length}`
-  return `已完结 ${terminalCount.value} / ${items.value.length}`
+  if (items.value.length === 0) return t('quick.state.waiting')
+  if (polling.value) return t('quick.state.polling', { done: terminalCount.value, total: items.value.length })
+  return t('quick.state.done', { done: terminalCount.value, total: items.value.length })
 })
 
 function reset() {
@@ -133,48 +134,51 @@ function reset() {
 
 <template>
   <section>
-    <h1 class="page-title">临时快查</h1>
-    <p class="page-sub">少量单号的快速路径；提交后直接在这里看到结果，不必跳转。</p>
+    <h1 class="page-title">{{ t('quick.title') }}</h1>
+    <p class="page-sub">{{ t('quick.sub') }}</p>
 
     <div v-if="!accepted" class="card">
-      <label for="quick-input" class="field-label">输入 USPS 单号（每行一个）</label>
+      <label for="quick-input" class="field-label">{{ t('common.input_label') }}</label>
       <textarea
         id="quick-input"
         v-model="text"
         class="big mono"
-        placeholder="每行一个单号，最多 35 行"
+        :placeholder="t('quick.placeholder')"
       ></textarea>
       <p class="hint" role="status">
-        已接收 {{ draft.totalLines }} 行 / 上限 {{ MAX_LINES }} 行
-        <template v-if="draft.overLong.length">；第 {{ draft.overLong.join('、') }} 行超过 100 字符</template>
+        {{ t('quick.received', { n: draft.totalLines, max: MAX_LINES }) }}
+        <template v-if="draft.overLong.length">{{ t('common.overlong', { lines: draft.overLong.join('、') }) }}</template>
       </p>
       <p v-if="draft.overLimit" class="error-box" role="alert">
-        超过 {{ MAX_LINES }} 行，请删减后重试或拆分为多次提交
+        {{ t('quick.over_limit', { max: MAX_LINES }) }}
       </p>
-      <p class="hint fee-rule">费用规则：1 个新单号扣 1 积分，30 天内重复免扣，无效项不扣费。</p>
+      <p class="hint fee-rule">{{ t('common.fee_rule') }}</p>
       <p v-if="error" class="error-box" role="alert">{{ error }}</p>
       <div class="actions">
         <button class="btn" :disabled="!canSubmit" @click="submit">
-          {{ submitting ? '提交中…' : '开始查询' }}
+          {{ submitting ? t('common.submitting') : t('common.start') }}
         </button>
-        <button class="btn ghost" @click="clearAll">清空</button>
+        <button class="btn ghost" @click="clearAll">{{ t('common.clear') }}</button>
       </div>
-      <p class="hint">点击「开始查询」即提交并按规则扣费。</p>
+      <p class="hint">{{ t('quick.confirm_note') }}</p>
     </div>
 
     <!-- 直出结果（P15）：受理摘要收进折叠，主视图就是单号卡片 -->
     <template v-else>
       <div class="card summary">
         <p class="ok-box" role="status">
-          已受理 — 扣费 {{ accepted.points_charged }} 积分
-          （可计费 {{ accepted.valid_count }} · 免扣 {{ accepted.free_count }} · 无效 {{ accepted.invalid_count }}）；
-          关闭页面不会取消任务。
+          {{ t('quick.accepted_line', {
+            charged: accepted.points_charged,
+            billable: accepted.valid_count,
+            free: accepted.free_count,
+            invalid: accepted.invalid_count,
+          }) }}
         </p>
         <details v-if="accepted.invalid_items.length">
-          <summary class="hint">不可计费明细（{{ accepted.invalid_items.length }} 条）</summary>
+          <summary class="hint">{{ t('quick.invalid_detail', { n: accepted.invalid_items.length }) }}</summary>
           <ul class="invalid-list">
             <li v-for="it in accepted.invalid_items" :key="it.line_no">
-              第 {{ it.line_no }} 行：<span class="mono">{{ it.raw }}</span>（原因：{{ it.reason }}）
+              {{ t('quick.invalid_line', { line: it.line_no, raw: it.raw, reason: it.reason }) }}
             </li>
           </ul>
         </details>
@@ -183,13 +187,13 @@ function reset() {
         </p>
         <StatusDistBar :distribution="dist" :total="items.length" />
         <div class="actions">
-          <button class="btn ghost sm" @click="reset">继续提交</button>
-          <RouterLink class="btn ghost sm" :to="`/results/batch/${accepted.operation_id}`">在批次页查看</RouterLink>
+          <button class="btn ghost sm" @click="reset">{{ t('quick.continue') }}</button>
+          <RouterLink class="btn ghost sm" :to="`/results/batch/${accepted.operation_id}`">{{ t('quick.view_batch') }}</RouterLink>
         </div>
       </div>
 
       <div v-if="items.length === 0" class="card empty-state" role="status">
-        <p>正在等待查询结果…（通常几秒内陆续到达）</p>
+        <p>{{ t('quick.waiting_results') }}</p>
       </div>
       <div v-else class="cards">
         <TrackingCard v-for="it in items" :key="it.id" :item="it" />

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { api, type SessionView } from '../api/client'
 import { loadSession, session } from '../composables/session'
+import { t } from '../i18n'
 
 // 设置页（04 §5.12；P15 精简）：修改密码 / 会话管理。
 // 移除「显示偏好」（时区/默认排序）——客户反馈无实际用途。
@@ -38,7 +39,9 @@ async function changePassword() {
       { old_password: oldPassword.value, new_password: newPassword.value },
     )
     notice.value =
-      `密码已修改${data.revoked_sessions ? `，已退出其它 ${data.revoked_sessions} 个会话` : ''}。`
+      t('settings.pwd_ok', {
+        suffix: data.revoked_sessions ? t('settings.pwd_ok_revoked', { n: data.revoked_sessions }) : '',
+      })
     oldPassword.value = ''
     newPassword.value = ''
   } catch (e) {
@@ -54,59 +57,59 @@ async function revokeOthers() {
   try {
     const { data } = await api.post<{ revoked: number }>(
       '/api/v1/settings/sessions/revoke-others')
-    notice.value = `已退出其它 ${data.revoked} 个会话。`
+    notice.value = t('settings.revoke_ok', { n: data.revoked })
     sessions.value = (await api.get<SessionView[]>('/api/v1/settings/sessions')).data
   } catch (e) {
     error.value = (e as { message: string }).message
   }
 }
 
-function fmt(t?: string): string {
-  return t ? new Date(t).toLocaleString() : '—'
+function fmt(s?: string): string {
+  return s ? new Date(s).toLocaleString() : '—'
 }
 </script>
 
 <template>
   <section>
-    <h1 class="page-title">设置</h1>
-    <p class="page-sub">账户安全。</p>
+    <h1 class="page-title">{{ t('settings.title') }}</h1>
+    <p class="page-sub">{{ t('settings.sub') }}</p>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
     <p v-if="notice" class="ok-box" role="status">{{ notice }}</p>
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
 
     <template v-else>
       <div class="card">
-        <h3>修改密码</h3>
+        <h3>{{ t('settings.pwd_title') }}</h3>
         <p class="hint">{{ session.me?.email }}</p>
         <div class="form-row">
-          <input v-model="oldPassword" type="password" placeholder="当前密码" />
-          <input v-model="newPassword" type="password" placeholder="新密码（至少 8 位）" />
+          <input v-model="oldPassword" type="password" :placeholder="t('settings.pwd_current')" />
+          <input v-model="newPassword" type="password" :placeholder="t('settings.pwd_new')" />
           <button class="btn sm" :disabled="pwdBusy || !oldPassword || newPassword.length < 8"
                   @click="changePassword">
-            修改密码
+            {{ t('settings.pwd_btn') }}
           </button>
         </div>
-        <p class="hint">修改成功后会默认退出其它设备的登录会话。</p>
+        <p class="hint">{{ t('settings.pwd_hint') }}</p>
       </div>
 
       <div class="card">
-        <h3>登录会话</h3>
+        <h3>{{ t('settings.sessions_title') }}</h3>
         <table class="list">
-          <thead><tr><th>登录时间</th><th>过期时间</th><th>状态</th></tr></thead>
+          <thead><tr><th>{{ t('settings.th.login_at') }}</th><th>{{ t('settings.th.expires_at') }}</th><th>{{ t('common.th.status') }}</th></tr></thead>
           <tbody>
             <tr v-for="s in sessions" :key="s.id">
               <td>{{ fmt(s.created_at) }}</td>
               <td>{{ fmt(s.expires_at) }}</td>
               <td>
-                <span v-if="s.revoked" class="badge muted">已退出</span>
-                <span v-else-if="s.current" class="badge">当前会话</span>
-                <span v-else class="badge muted">其它会话</span>
+                <span v-if="s.revoked" class="badge muted">{{ t('settings.session.revoked') }}</span>
+                <span v-else-if="s.current" class="badge">{{ t('settings.session.current') }}</span>
+                <span v-else class="badge muted">{{ t('settings.session.other') }}</span>
               </td>
             </tr>
           </tbody>
         </table>
-        <button class="btn sm ghost" @click="revokeOthers">退出其它会话</button>
+        <button class="btn sm ghost" @click="revokeOthers">{{ t('settings.revoke_others') }}</button>
       </div>
     </template>
   </section>

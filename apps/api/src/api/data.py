@@ -64,9 +64,31 @@ class BRepository:
         if row is None or not self._verify_password(password, row[2]):
             return None
         if row[3] != "active":
-            raise ApiProblem(codes.FORBIDDEN)
+            # pending=待审核 / suspended=已冻结：都不可登录，但语义分开提示（P16）。
+            code = codes.ACCOUNT_PENDING if row[3] == "pending" else codes.FORBIDDEN
+            raise ApiProblem(code)
         return {"customer_id": row[0], "public_id": str(row[1]),
                 "role": row[4], "tenant_id": row[5], "email": row[6]}
+
+    def register_customer(self, email: str, password_hash: str) -> dict:
+        """开放注册（P16）：建 pending 客户 + 0 余额钱包，等管理端审核。
+
+        与登录同库原子；邮箱唯一冲突抛 EMAIL_EXISTS（路由转 409）。
+        """
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO customer (email, password_hash, status, role)
+                       VALUES (%s, %s, 'pending', 'member')
+                       RETURNING customer_id, public_id""",
+                    (email, password_hash),
+                )
+                row = cur.fetchone()
+                cur.execute(
+                    "INSERT INTO wallet (customer_id, balance) VALUES (%s, 0)",
+                    (row[0],),
+                )
+        return {"customer_id": row[0], "public_id": str(row[1])}
 
     @staticmethod
     def _verify_password(password: str, stored: str) -> bool:
@@ -479,31 +501,30 @@ class BRepository:
 
     # ---- 客户/租户/席位（只读 + 状态变更）----
     def list_customers(self, *, tenant_id: int | None = None,
+                       status: str | None = None,
                        limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
-        """客户列表（管理端）：带钱包余额（LEFT JOIN，无钱包行视为 0）。"""
+        """客户列表（管理端）：带钱包余额（LEFT JOIN，无钱包行视为 0）。status 可过滤。"""
+        where, params = [], []
+        if tenant_id is not None:
+            where.append("c.tenant_id=%s")
+            params.append(tenant_id)
+        if status:
+            where.append("c.status=%s")
+            params.append(status)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
         with self.connect() as conn:
             with conn.cursor() as cur:
-                if tenant_id is not None:
-                    cur.execute(
-                        "SELECT count(*) FROM customer WHERE tenant_id=%s", (tenant_id,))
-                else:
-                    cur.execute("SELECT count(*) FROM customer")
+                cur.execute(
+                    "SELECT count(*) FROM customer c" + where_sql, tuple(params))
                 total = cur.fetchone()[0]
-                base_sql = (
+                cur.execute(
                     """SELECT c.customer_id, c.public_id, c.email, c.status, c.role,
                               c.tenant_id, c.created_at,
                               COALESCE(w.balance, 0) AS balance
                        FROM customer c
-                       LEFT JOIN wallet w ON w.customer_id = c.customer_id""")
-                if tenant_id is not None:
-                    cur.execute(
-                        base_sql + " WHERE c.tenant_id=%s ORDER BY c.created_at DESC"
-                        " LIMIT %s OFFSET %s",
-                        (tenant_id, limit, offset))
-                else:
-                    cur.execute(
-                        base_sql + " ORDER BY c.created_at DESC LIMIT %s OFFSET %s",
-                        (limit, offset))
+                       LEFT JOIN wallet w ON w.customer_id = c.customer_id"""
+                    + where_sql + " ORDER BY c.created_at DESC LIMIT %s OFFSET %s",
+                    (*params, limit, offset))
                 rows = cur.fetchall()
         return ([{"customer_id": r[0], "public_id": str(r[1]), "email": r[2],
                   "status": r[3], "role": r[4], "tenant_id": r[5],

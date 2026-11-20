@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type ExportJobView, type GroupView, type BatchView } from '../api/client'
+import { t } from '../i18n'
 
 // 导出任务（04 §5.9）：范围选择/短期下载链接/过期重新导出。
 const items = ref<ExportJobView[]>([])
@@ -39,7 +40,7 @@ onMounted(async () => {
 async function create() {
   if (busy.value) return
   if (scope.value !== 'all' && !scopeRef.value) {
-    error.value = '请先选择导出范围对应的组或批次'
+    error.value = t('exports.err_scope')
     return
   }
   busy.value = true
@@ -65,71 +66,74 @@ async function regenerate(e: ExportJobView) {
   await create()
 }
 
-const SCOPE_TEXT: Record<string, string> = {
-  all: '全部结果', group: '当前组', batch: '当前批次',
+function scopeText(s: string): string {
+  if (s === 'all') return t('exports.scopec.all')
+  if (s === 'group') return t('exports.scopec.group')
+  if (s === 'batch') return t('exports.scopec.batch')
+  return s
 }
 
-function fmt(t?: string | null): string {
-  return t ? new Date(t).toLocaleString() : '—'
+function fmt(s?: string | null): string {
+  return s ? new Date(s).toLocaleString() : '—'
 }
 </script>
 
 <template>
   <section>
-    <h1 class="page-title">导出任务</h1>
+    <h1 class="page-title">{{ t('exports.title') }}</h1>
     <p class="page-sub">
-      导出结果为 CSV 文件；下载链接短期有效，过期后请重新导出。
+      {{ t('exports.sub') }}
     </p>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
 
     <div class="card new-export">
-      <label>导出范围
+      <label>{{ t('exports.scope_label') }}
         <select v-model="scope">
-          <option value="all">全部结果</option>
-          <option value="group">指定组</option>
-          <option value="batch">指定批次</option>
+          <option value="all">{{ t('exports.scope.all') }}</option>
+          <option value="group">{{ t('exports.scope.group') }}</option>
+          <option value="batch">{{ t('exports.scope.batch') }}</option>
         </select>
       </label>
       <select v-if="scope === 'group'" v-model="scopeRef">
-        <option value="" disabled>选择组</option>
+        <option value="" disabled>{{ t('exports.pick_group') }}</option>
         <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name }}</option>
       </select>
       <select v-if="scope === 'batch'" v-model="scopeRef">
-        <option value="" disabled>选择批次</option>
+        <option value="" disabled>{{ t('exports.pick_batch') }}</option>
         <option v-for="b in batches" :key="b.id" :value="b.id">
-          {{ b.id.slice(0, 8) }}…（{{ b.total_count }} 条，{{ b.created_at.slice(0, 10) }}）
+          {{ t('exports.batch_option', { id: b.id.slice(0, 8), n: b.total_count, date: b.created_at.slice(0, 10) }) }}
         </option>
       </select>
       <button class="btn sm" :disabled="busy" @click="create">
-        {{ busy ? '生成中…' : '生成并下载' }}
+        {{ busy ? t('exports.generating') : t('exports.generate') }}
       </button>
     </div>
 
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
-    <p v-else-if="items.length === 0" class="hint" role="status">还没有导出任务。</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
+    <p v-else-if="items.length === 0" class="hint" role="status">{{ t('exports.empty') }}</p>
 
     <table v-else class="list">
       <thead>
         <tr>
-          <th>范围</th><th>创建时间</th><th>行数</th><th>格式</th><th>有效期</th><th></th>
+          <th>{{ t('exports.th.scope') }}</th><th>{{ t('common.th.created') }}</th><th>{{ t('exports.th.rows') }}</th><th>{{ t('exports.th.format') }}</th><th>{{ t('exports.th.validity') }}</th><th></th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="e in items" :key="e.id">
-          <td>{{ SCOPE_TEXT[e.scope] ?? e.scope }}</td>
+          <td>{{ scopeText(e.scope) }}</td>
           <td>{{ fmt(e.created_at) }}</td>
           <td>{{ e.row_count }}</td>
           <td>{{ e.format.toUpperCase() }}</td>
           <td>
-            <span v-if="e.expired" class="expired" role="status">文件已过期，请重新导出</span>
-            <span v-else>{{ fmt(e.expires_at) }} 前有效</span>
+            <span v-if="e.expired" class="expired" role="status">{{ t('exports.expired') }}</span>
+            <span v-else>{{ t('exports.valid_until', { time: fmt(e.expires_at) }) }}</span>
           </td>
           <td>
             <button v-if="e.expired || !e.download_url" class="btn sm ghost" @click="regenerate(e)">
-              重新导出
+              {{ t('exports.reexport') }}
             </button>
-            <a v-else :href="e.download_url" target="_blank">下载</a>
+            <a v-else :href="e.download_url" target="_blank">{{ t('common.download') }}</a>
           </td>
         </tr>
       </tbody>

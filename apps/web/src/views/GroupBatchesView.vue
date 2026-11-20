@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, type GroupView, type BatchView, type TrackingView, type CheckUpdateResult } from '../api/client'
 import { loadStatusDict, lang } from '../composables/session'
+import { t } from '../i18n'
 import { hasUpdate, visibilityPolling, createChangeTracker } from '../composables/sse'
 import StatusDistBar from '../components/StatusDistBar.vue'
 
@@ -68,9 +69,9 @@ const batchStats = computed(() => {
   return map
 })
 
-function fmtTime(t?: string | null): string {
-  if (!t) return '—'
-  const d = new Date(t)
+function fmtTime(s?: string | null): string {
+  if (!s) return '—'
+  const d = new Date(s)
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
@@ -83,7 +84,7 @@ async function checkAllPending() {
     .filter((it) => !it.is_terminal)
     .map((it) => it.id)
   if (ids.length === 0) {
-    checkFeedback.value = '本组所有单号都已完结，无需检查。'
+    checkFeedback.value = t('gb.all_done')
     return
   }
   checking.value = true
@@ -92,8 +93,7 @@ async function checkAllPending() {
       customer_tracking_ids: ids,
     })
     const fresh = data.filter((r) => r.fresh).length
-    checkFeedback.value =
-      `已提交检查 ${data.length} 项（${fresh} 项沿用现有结果，其余已创建检查任务）；结果在后台更新。`
+    checkFeedback.value = t('gb.check_done', { n: data.length, fresh })
   } catch (e) {
     checkFeedback.value = ''
     error.value = (e as { message: string }).message
@@ -109,7 +109,7 @@ async function exportGroup() {
   exporting.value = true
   try {
     await api.post('/api/v1/exports', { scope: 'group', scope_ref: groupId.value })
-    checkFeedback.value = '导出任务已创建，可在「导出任务」页下载。'
+    checkFeedback.value = t('gb.export_done')
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
@@ -120,30 +120,30 @@ async function exportGroup() {
 
 <template>
   <section>
-    <p class="crumb"><RouterLink to="/results">我的查询</RouterLink> › {{ group?.name ?? '查询组' }}</p>
+    <p class="crumb"><RouterLink to="/results">{{ t('nav.results') }}</RouterLink> › {{ group?.name ?? t('gb.crumb_group') }}</p>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
-    <p v-if="loading" class="hint" role="status">正在加载…</p>
+    <p v-if="loading" class="hint" role="status">{{ t('common.loading') }}</p>
 
     <template v-else>
       <div v-if="group" class="card ghead">
         <div class="ghead-row">
-          <h1 class="page-title">{{ group.name }} <span v-if="group.is_default" class="badge">默认</span></h1>
+          <h1 class="page-title">{{ group.name }} <span v-if="group.is_default" class="badge">{{ t('gb.default') }}</span></h1>
           <div class="actions">
             <button class="btn ghost sm" :disabled="checking" @click="checkAllPending">
-              {{ checking ? '检查中…' : '检查更新' }}
+              {{ checking ? t('card.checking') : t('common.check_update') }}
             </button>
-            <button class="btn ghost sm" :disabled="exporting" @click="exportGroup">导出</button>
+            <button class="btn ghost sm" :disabled="exporting" @click="exportGroup">{{ t('common.export') }}</button>
           </div>
         </div>
-        <p class="hint">{{ group.tracking_count }} 个单号 · {{ group.batch_count }} 批次</p>
+        <p class="hint">{{ group.tracking_count }}{{ t('gb.numbers_unit') }} · {{ group.batch_count }}{{ t('gb.batches_unit') }}</p>
         <StatusDistBar :distribution="group.status_distribution" :total="group.tracking_count" />
         <p v-if="checkFeedback" class="ok-box" role="status">{{ checkFeedback }}</p>
       </div>
 
       <div v-if="batches.length === 0" class="card empty-state" role="status">
-        <p>这个组还没有提交批次。</p>
-        <RouterLink class="btn" to="/submit">提交单号</RouterLink>
+        <p>{{ t('gb.no_batches') }}</p>
+        <RouterLink class="btn" to="/submit">{{ t('nav.submit') }}</RouterLink>
       </div>
 
       <div v-else class="batches">
@@ -157,11 +157,11 @@ async function exportGroup() {
         >
           <div class="bcard-head">
             <span class="b-time">{{ fmtTime(b.created_at) }}</span>
-            <span class="meta">{{ b.valid_count }} 个单号</span>
-            <span class="meta dim">最近查询 {{ fmtTime(b.updated_at) }}</span>
+            <span class="meta">{{ b.valid_count }}{{ t('gb.numbers_unit') }}</span>
+            <span class="meta dim">{{ t('gb.last_query', { time: fmtTime(b.updated_at) }) }}</span>
             <span class="spacer"></span>
             <span class="badge" :class="{ terminal: (batchStats.get(b.id)?.terminal ?? 0) >= b.valid_count && b.valid_count > 0 }">
-              已完结 {{ batchStats.get(b.id)?.terminal ?? 0 }}
+              {{ t('gb.terminal_badge', { n: batchStats.get(b.id)?.terminal ?? 0 }) }}
             </span>
           </div>
           <StatusDistBar

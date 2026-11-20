@@ -5,7 +5,8 @@ import secrets
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from contracts.auth import AuthMeResponse, LoginRequest, LoginResponse
+from contracts.auth import (AuthMeResponse, LoginRequest, LoginResponse,
+                            RegisterRequest, RegisterResponse)
 from pandatrack_common import codes
 
 from api.data import BRepository
@@ -46,6 +47,36 @@ def login(payload: LoginRequest, request: Request, response: Response,
                          role=subject["role"],
                          tenant_id=str(subject["tenant_id"])
                          if subject["tenant_id"] else None)
+
+
+@router.post("/register", response_model=RegisterResponse,
+             status_code=201)
+def register(payload: RegisterRequest, request: Request,
+             repo: BRepository = Depends(get_repo)):
+    """开放注册（P16）：建 pending 账号，管理端审核通过后才可登录。
+
+    防滥用：按 IP 与 邮箱两级限流（复用登录防爆破机制，独立类别不互影响）。
+    """
+    ip = client_ip(request)
+    email = str(payload.email).strip().lower()
+    for key in throttle_keys(ip, email):
+        retry = locked_retry_after(
+            repo.login_throttle_locked_until("register", key))
+        if retry is not None:
+            raise ApiProblem(codes.RATE_LIMITED, {"retry_after_seconds": retry})
+    try:
+        repo.register_customer(email, BRepository.hash_password(payload.password))
+    except Exception as exc:  # 唯一冲突 → 409；其余交全局错误处理
+        for key in throttle_keys(ip, email):
+            repo.login_throttle_record_fail("register", key,
+                                            window_seconds=3600,
+                                            max_attempts=10)
+        if "duplicate key" in str(exc).lower() or "unique" in str(exc).lower():
+            raise ApiProblem(codes.EMAIL_EXISTS) from exc
+        raise
+    for key in throttle_keys(ip, email):
+        repo.login_throttle_reset("register", key)
+    return RegisterResponse(status="pending")
 
 
 @router.get("/me", response_model=AuthMeResponse)
