@@ -24,14 +24,16 @@ const hasDictZh = computed(() =>
 
 function titleOf(e: TrackingView['events'][number]): string {
   if (!translated.value) return e.description || e.label_zh || statusLabel(e.status_key)
-  return e.description_zh || fallbackZh.value.get(e.description || '')
-    || e.description || e.label_zh || statusLabel(e.status_key)
+  const zh = e.description_zh || fallbackZh.value.get(e.description || '') || ''
+  const usable = zh && !(zh === '其他状态' && e.description)
+  return (usable ? zh : e.description) || e.label_zh || statusLabel(e.status_key)
 }
 
 function subOf(e: TrackingView['events'][number]): string {
   if (!translated.value) return ''
   const zh = e.description_zh || fallbackZh.value.get(e.description || '') || ''
-  return zh && zh !== e.description ? (e.description || '') : ''
+  const usable = zh && !(zh === '其他状态' && e.description)
+  return usable && zh !== e.description ? (e.description || '') : ''
 }
 
 async function toggleTranslate() {
@@ -186,7 +188,7 @@ function fmtTime(s?: string | null): string {
 
 <style scoped>
 .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.tl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
 .tr-toggle { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--brand); cursor: pointer; font-weight: 600; }
 .tr-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 .sim-flag { font-weight: 700; }

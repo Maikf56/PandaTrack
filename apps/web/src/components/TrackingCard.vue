@@ -32,15 +32,18 @@ const latest = computed(() => events.value[0])
 /** 词条标题：翻译态取词典/机翻中文，原文态取英文 description。 */
 function titleOf(ev: TrackingEvent): string {
   if (!translated.value) return ev.description || ev.label_zh || statusLabel(ev.status_key)
-  return ev.description_zh || fallbackZh.value.get(ev.description || '')
-    || ev.description || ev.label_zh || statusLabel(ev.status_key)
+  const zh = ev.description_zh || fallbackZh.value.get(ev.description || '') || ''
+  // 存量兜底：词典未命中的短语 zh 可能是占位「其他状态」，回退原文更直观
+  const usable = zh && !(zh === '其他状态' && ev.description)
+  return (usable ? zh : ev.description) || ev.label_zh || statusLabel(ev.status_key)
 }
 
 /** 翻译态下标题下的灰色原文副行（与中文不同才显示）。 */
 function subOf(ev: TrackingEvent): string {
   if (!translated.value) return ''
   const zh = ev.description_zh || fallbackZh.value.get(ev.description || '') || ''
-  return zh && zh !== ev.description ? (ev.description || '') : ''
+  const usable = zh && !(zh === '其他状态' && ev.description)
+  return usable && zh !== ev.description ? (ev.description || '') : ''
 }
 
 const hasDictZh = computed(() =>

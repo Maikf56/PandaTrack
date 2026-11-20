@@ -11,6 +11,9 @@ Environment=PYTHONPATH=/home/ubuntu/pandatrack/apps/api/src:/home/ubuntu/pandatr
 Environment=PT_EVENT_LISTEN=true
 EnvironmentFile=/home/ubuntu/pandatrack/.env
 ExecStart=/home/ubuntu/pandatrack/.venv/bin/python -m uvicorn api.app:create_app --factory --host 127.0.0.1 --port 8100
+# SSE /events 是长连接，graceful shutdown 会一直等；超时后 systemd 强杀
+TimeoutStopSec=10
+KillMode=mixed
 Restart=always
 RestartSec=3
 
