@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadSession, session, clearSession } from './composables/session'
-import { connState } from './composables/sse'
+import { connState, useSse } from './composables/sse'
 import pandaLogo from './assets/panda-logo.jpeg'
 
 const route = useRoute()
@@ -12,6 +12,14 @@ const isWorkspace = computed(() => route.meta.auth === true)
 const isLoggedIn = computed(() => session.me !== null)
 
 loadSession()
+
+// 全局实时通道：登录进入工作台后由 App 持有常驻连接（引用计数单例），
+// 顶栏指示器在任何工作台页面都反映真实连接状态（P14 修复"离线"恒显）。
+const { open: openSse, close: closeSse } = useSse()
+watch(() => isWorkspace.value && isLoggedIn.value, (on) => {
+  if (on) openSse()
+  else closeSse()
+}, { immediate: true })
 
 async function logout() {
   try {

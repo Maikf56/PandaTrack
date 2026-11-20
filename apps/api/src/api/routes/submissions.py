@@ -15,7 +15,7 @@ from contracts.submission import (
 )
 from pandatrack_common import codes
 from worker.billing.submission import (
-    IdempotencyConflict, InsufficientBalance, request_fingerprint, submit,
+    BATCH_SIZE, IdempotencyConflict, InsufficientBalance, request_fingerprint, submit,
 )
 from worker.cleaner.cleaner import Cleaner
 
@@ -156,8 +156,7 @@ def create_submission(payload: SubmissionCreate,
 
 
 def _batch_indices(valid_count: int) -> list[int]:
-    """35 切片后的批次序号（1-based）。"""
+    """切片后的批次序号（1-based；与 submit() 侧 BATCH_SIZE 同源）。"""
     if not valid_count:
         return []
-    import math
-    return list(range(1, math.ceil(valid_count / 35) + 1))
+    return list(range(1, math.ceil(valid_count / BATCH_SIZE) + 1))

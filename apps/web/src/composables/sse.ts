@@ -2,6 +2,9 @@
  * 实时通道（04 §8.2，G2 吸收）：
  * - SSE 优先，Last-Event-ID 由 EventSource 自动携带；
  * - 连接状态三态（live/polling/offline）为模块级共享，顶栏指示器读取；
+ * - 连接为模块级单例（引用计数）：顶栏指示器全局可见，而旧实现只在
+ *   结果页/总览页建立连接——其他页面永远显示"离线"（P14 修复）。
+ *   App.vue 登录后持有常驻连接，页面订阅只是增加引用计数；
  * - 可见性感知轮询：标签页不可见暂停，恢复可见立即补查；
  * - 变更追踪：客户触发式呈现（§6.3）——事件只置标记，客户点击才刷新；
  *   刷新后对状态跃迁行做 1.2s 高亮淡出（§8.2）。
@@ -12,42 +15,59 @@ export type ConnState = 'live' | 'polling' | 'offline'
 
 /** 模块级共享：任意订阅者更新，顶栏指示器统一读取。 */
 export const connState = ref<ConnState>('offline')
+/** 模块级共享：收到推送事件后置位，页面消费后自行复位。 */
+export const hasUpdate = ref(false)
+
+let es: EventSource | null = null
+let refCount = 0
+
+function ensureOpen(path: string) {
+  if (es) return
+  try {
+    es = new EventSource(path, { withCredentials: true })
+    es.onopen = () => {
+      connState.value = 'live'
+    }
+    es.onmessage = () => {
+      // 只标记，由客户决定是否刷新（不自动改行、不弹通知）
+      hasUpdate.value = true
+    }
+    es.onerror = () => {
+      // EventSource 自动重连；期间降级展示为轮询态，由调用方兜底
+      if (connState.value === 'live') connState.value = 'polling'
+    }
+  } catch {
+    es = null
+    connState.value = 'offline'
+  }
+}
+
+function teardown() {
+  es?.close()
+  es = null
+  connState.value = 'offline'
+}
 
 export function useSse(path = '/api/v1/events') {
   const connected = ref(false)
-  const hasUpdate = ref(false)
-  let es: EventSource | null = null
+  let held = false
 
   function open() {
-    if (es) return
-    try {
-      es = new EventSource(path, { withCredentials: true })
-      es.onopen = () => {
-        connected.value = true
-        connState.value = 'live'
-      }
-      es.onmessage = () => {
-        // 只标记，由客户决定是否刷新（不自动改行、不弹通知）
-        hasUpdate.value = true
-      }
-      es.onerror = () => {
-        connected.value = false
-        // EventSource 自动重连；期间降级展示为轮询态，由调用方兜底
-        if (connState.value === 'live') connState.value = 'polling'
-      }
-    } catch {
-      connected.value = false
-      connState.value = 'offline'
-    }
+    if (held) return
+    held = true
+    refCount++
+    ensureOpen(path)
   }
 
   function close() {
-    es?.close()
-    es = null
+    if (!held) return
+    held = false
     connected.value = false
-    if (connState.value !== 'offline') connState.value = 'offline'
+    refCount = Math.max(0, refCount - 1)
+    if (refCount === 0) teardown()
   }
 
+  // 页面卸载自动释放引用；顶栏连接由 App.vue 持有，不随页面销毁
   onUnmounted(close)
 
   return { connected, hasUpdate, open, close }

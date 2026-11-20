@@ -16,6 +16,7 @@ from pandatrack_common.hashutil import payload_digest
 from .rules import WATERSHED_HOURS
 
 ENDPOINT = "/api/v1/submissions"
+BATCH_SIZE = 35  # 受理切片（06 §3.4：submission_batch 每批 35 条）
 
 
 class IdempotencyConflict(Exception):
@@ -129,6 +130,33 @@ def submit(
              billable_count),
         )
         operation_id = cur.fetchone()[0]
+
+        # 5.5) 客户跟踪关系 + 批次明细（断链修复：投影扇出与批次页依赖这三张表）。
+        # - customer_tracking：客户↔单号关系，sync-agent 按 normalized_number
+        #   扇出投影的唯一依据；缺失则采集结果永远 skipped_no_customer。
+        # - submission_batch/submission_item：批次进度与批次详情的数据源。
+        # 全部 ON CONFLICT 幂等：同号重复提交不重建关系，批次按本次受理新建。
+        cur.execute(
+            """INSERT INTO customer_tracking (customer_id, normalized_number)
+               SELECT %s, c.normalized_number FROM _submit_candidates c
+               ON CONFLICT (customer_id, normalized_number) DO NOTHING""",
+            (customer_id,),
+        )
+        for seq in range(0, len(normalized_numbers), BATCH_SIZE):
+            chunk = normalized_numbers[seq:seq + BATCH_SIZE]
+            cur.execute(
+                """INSERT INTO submission_batch
+                       (operation_id, batch_seq, item_count, state)
+                   VALUES (%s, %s, %s, 'accepted') RETURNING batch_id""",
+                (operation_id, seq // BATCH_SIZE + 1, len(chunk)),
+            )
+            batch_id = cur.fetchone()[0]
+            with cur.copy(
+                "COPY submission_item (batch_id, item_seq, raw_number, "
+                "normalized_number, is_valid) FROM STDIN"
+            ) as copy:
+                for j, num in enumerate(chunk, start=1):
+                    copy.write_row((batch_id, j, num, num, True))
 
         # 6) 扣费：一条积分流水（CHARGE 负向）
         if billable_count > 0:

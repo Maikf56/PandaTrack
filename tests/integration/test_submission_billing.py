@@ -45,6 +45,16 @@ def _cleanup(cid: int) -> None:
             cur.execute(
                 "DELETE FROM billing_outbox WHERE aggregate_id IN "
                 "(SELECT operation_id FROM submission_operation WHERE customer_id=%s)", (cid,))
+            # 明细表先删（submit 现在会写 batch/item/customer_tracking，P14 断链修复）
+            cur.execute(
+                "DELETE FROM submission_item WHERE batch_id IN "
+                "(SELECT batch_id FROM submission_batch WHERE operation_id IN "
+                "(SELECT operation_id FROM submission_operation WHERE customer_id=%s))", (cid,))
+            cur.execute(
+                "DELETE FROM submission_batch WHERE operation_id IN "
+                "(SELECT operation_id FROM submission_operation WHERE customer_id=%s)", (cid,))
+            cur.execute(
+                "DELETE FROM customer_tracking WHERE customer_id=%s", (cid,))
             for table in ("points_ledger", "billing_charge_window", "submission_operation",
                           "idempotency_record", "wallet"):
                 cur.execute(f"DELETE FROM {table} WHERE customer_id=%s", (cid,))
@@ -91,6 +101,46 @@ class TestAtomicCharge:
                     "SELECT points_change FROM points_ledger WHERE customer_id=%s "
                     "AND ledger_type='charge'", (customer,))
                 assert cur.fetchone()[0] == -2
+
+    def test_creates_tracking_and_batch_items(self, customer):
+        """P14 断链修复：受理同事务建立 customer_tracking + 批次明细。
+
+        投影扇出（sync-agent）按 customer_tracking 找客户，批次页按
+        submission_batch/item 出进度——缺失则采集成功客户也看不到结果。
+        """
+        nums = [A, B]
+        with psycopg.connect(DB_URL) as conn:
+            fp = request_fingerprint({"numbers": nums})
+            out = submit(conn, customer_id=customer, client_request_id="req-links-001",
+                         fingerprint=fp, normalized_numbers=nums)
+            conn.commit()
+        with psycopg.connect(DB_URL) as conn:
+            with conn.cursor() as cur:
+                # 客户跟踪关系：两行，幂等不重复
+                cur.execute(
+                    "SELECT count(*) FROM customer_tracking WHERE customer_id=%s",
+                    (customer,))
+                assert cur.fetchone()[0] == 2
+                # 批次：2 条 < 35 → 单批，item_count=2
+                cur.execute(
+                    """SELECT sb.batch_seq, sb.item_count, sb.state
+                       FROM submission_batch sb
+                       JOIN submission_operation so ON so.operation_id=sb.operation_id
+                       WHERE so.public_id=%s ORDER BY sb.batch_seq""",
+                    (out.operation_public_id,))
+                rows = cur.fetchall()
+                assert rows == [(1, 2, "accepted")]
+                # 明细：两行，normalized_number 齐全
+                cur.execute(
+                    """SELECT si.item_seq, si.normalized_number, si.is_valid
+                       FROM submission_item si
+                       JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                       JOIN submission_operation so ON so.operation_id=sb.operation_id
+                       WHERE so.public_id=%s ORDER BY si.item_seq""",
+                    (out.operation_public_id,))
+                items = cur.fetchall()
+                assert [n for _, n, _ in items] == nums
+                assert all(v for _, _, v in items)
 
     def test_insufficient_whole_batch_fails(self):
         cid = _make_customer(1)  # 余额 1，需扣 3 → 整批失败

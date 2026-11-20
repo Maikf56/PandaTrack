@@ -7,8 +7,9 @@
   之后——两段之间崩溃则重放，upsert 结果不变；
 - 同一单号可能被多个客户跟踪：投影按 normalized_number 扇出到全部
   customer_tracking（07：跳过抓取 ≠ 跳过客户关系）；
-- 无客户关系的事实（无 customer_tracking 行）跳过待投影，不丢——
-  下一轮 outbox 仍在 processed=false 可重放。
+- 无客户关系的事实（无 customer_tracking 行）本轮跳过投影，但事件仍
+  标记 processed 不再重放（submit 受理事务自 P14 起同事务建立关系，
+  正常链路不应出现缺关系的事实）。
 """
 from __future__ import annotations
 
