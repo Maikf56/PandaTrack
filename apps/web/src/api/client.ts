@@ -107,6 +107,9 @@ export interface TrackingView {
   events: TrackingEvent[]
   next_sync_at?: string | null
   last_success_at?: string | null
+  group_name?: string | null
+  batch_id?: string | null
+  batch_created_at?: string | null
 }
 
 export interface CheckUpdateResult {

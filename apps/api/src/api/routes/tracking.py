@@ -157,4 +157,7 @@ def _to_view(row: dict) -> TrackingView:
         is_terminal=std.key in status_dict.TERMINAL_STATUSES,
         simulated=False,  # 生产客户页面的投影恒为真实来源
         events=events,
+        group_name=row.get("group_name"),
+        batch_id=row.get("batch_id"),
+        batch_created_at=row.get("batch_created_at"),
     )

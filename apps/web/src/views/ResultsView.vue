@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { api, type TrackingView, type CheckUpdateResult } from '../api/client'
+import { useRoute } from 'vue-router'
+import { api, type TrackingView, type CheckUpdateResult, type TrackingEvent } from '../api/client'
 import { loadStatusDict, session, statusLabel } from '../composables/session'
 import { useSse, visibilityPolling, createChangeTracker } from '../composables/sse'
 
-// 结果列表（04 §5.6/§8.2，G2 流程 3）：筛选 + 检查更新防呆 + 变化感知。
+// 结果列表（04 §5.6/§8.2，G2 流程 3；P14 分组视图重构）：
+// 批次/分组/平铺三种视图 + 深链 ?op=/?group= + 快捷筛选 + 行内最新事件。
 const items = ref<TrackingView[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -12,6 +14,20 @@ const search = ref('')
 const filterStatus = ref('')
 const selected = ref<Set<string>>(new Set())
 const checkFeedback = ref('')
+
+// 深链：提交记录/分组页跳转进来直接落在对应批次/分组（修复 /results?op= 断链）
+const route = useRoute()
+const opFilter = ref<string | null>(null)
+const groupFilter = ref<string | null>(null)
+
+// 视图模式：批次（默认，按"最近提交"组织）/ 分组 / 平铺
+const viewMode = ref<'batch' | 'group' | 'flat'>('batch')
+
+// 快捷筛选：待跟进（非终态）与异常是最常用的两个口径
+const quickFilter = ref<'all' | 'pending' | 'anomaly'>('all')
+
+// 折叠的批次/分组（按 key）
+const collapsed = ref<Set<string>>(new Set())
 
 // 检查更新弹层（§5.6：默认勾选异常与暂未获取项；实时显示沿用计数）
 const checkDialogOpen = ref(false)
@@ -24,7 +40,6 @@ const changeSummary = ref(0)
 const stopPolling = visibilityPolling(reload, 15000)
 
 // 实时通道（§8.2）：SSE 推送 → 800ms 防抖自动刷新；轮询为断线兜底
-// （结果页是等待场景，自动更新优于手动提示；SSE 在线时轮询自动跳过）
 const { hasUpdate, open, close } = useSse()
 let reloadTimer: ReturnType<typeof setTimeout> | null = null
 watch(hasUpdate, (v) => {
@@ -39,6 +54,11 @@ watch(hasUpdate, (v) => {
 onMounted(async () => {
   open()
   await loadStatusDict()
+  const qOp = route.query.op
+  if (typeof qOp === 'string' && qOp) opFilter.value = qOp
+  const qGroup = route.query.group
+  if (typeof qGroup === 'string' && qGroup) groupFilter.value = qGroup
+  if (groupFilter.value) viewMode.value = 'group'
   await reload()
 })
 
@@ -65,13 +85,124 @@ async function reload() {
   }
 }
 
-const filtered = computed(() =>
+const baseFiltered = computed(() =>
   items.value.filter((it) => {
     if (search.value && !it.normalized_number.includes(search.value.trim())) return false
     if (filterStatus.value && it.status_key !== filterStatus.value) return false
+    if (quickFilter.value === 'pending' && it.is_terminal) return false
+    if (quickFilter.value === 'anomaly' && !ANOMALY_KEYS.has(it.status_key)) return false
     return true
   }),
 )
+
+const filtered = computed(() => {
+  let arr = baseFiltered.value
+  if (opFilter.value) arr = arr.filter((it) => it.batch_id === opFilter.value)
+  if (groupFilter.value) arr = arr.filter((it) => it.group_name === groupFilter.value)
+  return arr
+})
+
+/* 快捷筛选计数（待跟进/异常） */
+const quickCounts = computed(() => ({
+  pending: items.value.filter((it) => !it.is_terminal).length,
+  anomaly: items.value.filter((it) => ANOMALY_KEYS.has(it.status_key)).length,
+}))
+
+const ANOMALY_KEYS = new Set(['not_found', 'exception', 'delivery_failed', 'returned'])
+
+/* 分组视图的段（批次 / 分组 / 平铺统一结构） */
+interface Section {
+  key: string
+  title: string
+  time: string | null
+  items: TrackingView[]
+  terminalCount: number
+}
+
+function fmtSectionTime(t?: string | null): string {
+  if (!t) return ''
+  const d = new Date(t)
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const sections = computed<Section[]>(() => {
+  if (viewMode.value === 'flat') {
+    return [{ key: 'all', title: '全部记录', time: null,
+              items: filtered.value,
+              terminalCount: filtered.value.filter((it) => it.is_terminal).length }]
+  }
+  const map = new Map<string, Section>()
+  for (const it of filtered.value) {
+    let key: string, title: string, time: string | null
+    if (viewMode.value === 'batch') {
+      key = it.batch_id || 'none'
+      time = it.batch_created_at || null
+      title = time ? `提交于 ${fmtSectionTime(time)}` : '更早的单号（未关联提交批次）'
+    } else {
+      key = it.group_name || '__ungrouped'
+      time = null
+      title = it.group_name || '未分组'
+    }
+    let sec = map.get(key)
+    if (!sec) {
+      sec = { key, title, time, items: [], terminalCount: 0 }
+      map.set(key, sec)
+    }
+    sec.items.push(it)
+    if (it.is_terminal) sec.terminalCount++
+  }
+  const list = [...map.values()]
+  if (viewMode.value === 'batch') {
+    // 批次按提交时间倒序；未关联批次的沉底
+    list.sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''))
+    const noneIdx = list.findIndex((s) => s.key === 'none')
+    if (noneIdx >= 0) list.push(list.splice(noneIdx, 1)[0])
+  }
+  return list
+})
+
+function toggleCollapse(key: string) {
+  const next = new Set(collapsed.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  collapsed.value = next
+}
+
+function selectSection(sec: Section) {
+  const next = new Set(selected.value)
+  for (const it of sec.items) next.add(it.id)
+  selected.value = next
+}
+
+function clearDeepLink() {
+  opFilter.value = null
+  groupFilter.value = null
+}
+
+function clearAllFilters() {
+  search.value = ''
+  filterStatus.value = ''
+  quickFilter.value = 'all'
+}
+
+const hasAnyFilter = computed(() =>
+  search.value !== '' || filterStatus.value !== '' ||
+  quickFilter.value !== 'all' || opFilter.value !== null || groupFilter.value !== null,
+)
+
+/* 行内最新事件（events 时间倒序，首条即最新） */
+function latestEvent(it: TrackingView): TrackingEvent | undefined {
+  return it.events?.[0]
+}
+
+function fmtEventTime(t?: string | null): string {
+  if (!t) return ''
+  return fmtSectionTime(t)
+}
+
+function fmtGetTime(t?: string | null): string {
+  return t ? new Date(t).toLocaleString() : '暂未获取'
+}
 
 function toggle(id: string) {
   const next = new Set(selected.value)
@@ -79,8 +210,6 @@ function toggle(id: string) {
   else next.add(id)
   selected.value = next
 }
-
-const ANOMALY_KEYS = new Set(['not_found', 'exception', 'delivery_failed', 'returned'])
 
 /** 检查更新弹层：默认勾选异常态 + 非终态暂未获取项（最常见的重查动机）。 */
 function openCheckDialog() {
@@ -143,7 +272,7 @@ function isChanged(id: string) {
     <div class="title-row">
       <div>
         <h1 class="page-title">结果列表</h1>
-        <p class="page-sub">按状态、单号筛选你的查询结果；结果由服务端按当前身份过滤。</p>
+        <p class="page-sub">按提交批次或分组查看查询结果；结果由服务端按当前身份过滤。</p>
       </div>
       <div class="legend-wrap">
         <button class="btn ghost sm" aria-label="状态图例" @click="legendOpen = !legendOpen">ⓘ 状态图例</button>
@@ -173,6 +302,48 @@ function isChanged(id: string) {
           {{ s.label_zh }}{{ s.terminal ? '（终态）' : '' }}
         </option>
       </select>
+      <button
+        v-if="hasAnyFilter"
+        class="btn ghost sm"
+        @click="clearDeepLink(); clearAllFilters()"
+      >清除全部筛选</button>
+    </div>
+
+    <!-- 视图切换 + 快捷筛选 chips（P14） -->
+    <div class="view-bar">
+      <div class="seg" role="group" aria-label="视图模式">
+        <button
+          v-for="m in ([
+            { v: 'batch', t: '按提交批次' },
+            { v: 'group', t: '按分组' },
+            { v: 'flat', t: '平铺' },
+          ] as const)" :key="m.v"
+          class="seg-btn"
+          :class="{ active: viewMode === m.v }"
+          @click="viewMode = m.v"
+        >{{ m.t }}</button>
+      </div>
+      <div class="chips">
+        <button
+          class="chip" :class="{ active: quickFilter === 'all' }"
+          @click="quickFilter = 'all'"
+        >全部</button>
+        <button
+          class="chip" :class="{ active: quickFilter === 'pending' }"
+          @click="quickFilter = quickFilter === 'pending' ? 'all' : 'pending'"
+        >待跟进 <span class="chip-n">{{ quickCounts.pending }}</span></button>
+        <button
+          class="chip" :class="{ active: quickFilter === 'anomaly' }"
+          @click="quickFilter = quickFilter === 'anomaly' ? 'all' : 'anomaly'"
+        >异常 <span class="chip-n">{{ quickCounts.anomaly }}</span></button>
+        <button class="chip" @click="selectSection(sections[0])" v-if="sections.length > 0">全选当前结果</button>
+      </div>
+    </div>
+
+    <!-- 深链提示条：从提交记录/分组页跳入时说明当前范围 -->
+    <div v-if="opFilter || groupFilter" class="card change-bar" role="status">
+      正在查看{{ opFilter ? '某一次提交批次' : `「${groupFilter}」分组` }}的结果
+      <button class="btn ghost sm" @click="clearDeepLink">查看全部</button>
     </div>
 
     <!-- 变更摘要条（04 §8.2）：翻页不打断更新流，一键跳到已变更 -->
@@ -183,42 +354,74 @@ function isChanged(id: string) {
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
     <p v-if="loading" class="hint" role="status">正在加载…</p>
-    <div v-else-if="filtered.length === 0" class="card empty-state" role="status">
+    <div v-else-if="items.length === 0" class="card empty-state" role="status">
       <p>还没有查询记录。先粘贴 USPS 单号开始查询，提交后这里会显示结果。</p>
       <RouterLink class="btn" to="/submit">去提交第一批单号</RouterLink>
     </div>
+    <div v-else-if="filtered.length === 0" class="card empty-state" role="status">
+      <p>没有符合当前筛选条件的记录。</p>
+      <button class="btn ghost" @click="clearDeepLink(); clearAllFilters()">清除筛选</button>
+    </div>
 
-    <table v-else class="list">
-      <thead>
-        <tr>
-          <th>选择</th>
-          <th>单号</th>
-          <th>当前状态</th>
-          <th>取得时间</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="it in filtered" :key="it.id" :class="{ flash: isChanged(it.id) }">
-          <td>
+    <div v-else class="sections">
+      <div v-for="sec in sections" :key="sec.key" class="sec">
+        <!-- 段头：批次显示时间与完结进度；平铺不显示头 -->
+        <button
+          v-if="viewMode !== 'flat'"
+          class="sec-head"
+          :aria-expanded="!collapsed.has(sec.key)"
+          @click="toggleCollapse(sec.key)"
+        >
+          <span class="sec-caret" :class="{ open: !collapsed.has(sec.key) }">▸</span>
+          <span class="sec-title">{{ sec.title }}</span>
+          <span class="sec-meta">
+            共 {{ sec.items.length }} 条 · 已完结 {{ sec.terminalCount }} 条
+          </span>
+          <span
+            class="sec-select"
+            role="button"
+            tabindex="0"
+            @click.stop="selectSection(sec)"
+            @keydown.enter.prevent="selectSection(sec)"
+          >选本组</span>
+        </button>
+        <div v-if="viewMode === 'flat' || !collapsed.has(sec.key)" class="sec-body">
+          <div
+            v-for="it in sec.items"
+            :key="it.id"
+            class="row"
+            :class="{ flash: isChanged(it.id) }"
+          >
             <input
               type="checkbox"
+              class="row-check"
               :checked="selected.has(it.id)"
               :aria-label="`选择 ${it.normalized_number}`"
               @change="toggle(it.id)"
             />
-          </td>
-          <td class="mono">{{ it.normalized_number }}</td>
-          <td>
-            <span class="badge" :class="{ terminal: it.is_terminal }">{{ it.label_zh || statusLabel(it.status_key) }}</span>
-          </td>
-          <td>{{ it.last_success_at ? new Date(it.last_success_at).toLocaleString() : '暂未获取' }}</td>
-          <td>
-            <RouterLink :to="`/results/${it.id}`">查看详情</RouterLink>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+            <div class="row-main">
+              <div class="row-top">
+                <span class="mono num">{{ it.normalized_number }}</span>
+                <span class="badge" :class="{ terminal: it.is_terminal }">
+                  {{ it.label_zh || statusLabel(it.status_key) }}
+                </span>
+              </div>
+              <div v-if="latestEvent(it)" class="row-sub">
+                <span class="evt">{{ latestEvent(it)!.description || latestEvent(it)!.label_zh }}</span>
+                <span v-if="fmtEventTime(latestEvent(it)!.occurred_at)" class="evt-time">
+                  {{ fmtEventTime(latestEvent(it)!.occurred_at) }}
+                </span>
+              </div>
+              <div v-else class="row-sub"><span class="evt dim">暂无轨迹事件</span></div>
+            </div>
+            <div class="row-side">
+              <span class="get-time">{{ fmtGetTime(it.last_success_at) }}</span>
+              <RouterLink :to="`/results/${it.id}`">详情</RouterLink>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="card bulk" v-if="selected.size > 0">
       <p class="hint">已选择 {{ selected.size }} 项</p>
@@ -273,7 +476,66 @@ function isChanged(id: string) {
 .filters { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
 .filters label { display: block; font-size: 13px; color: var(--fg-soft); margin-bottom: 4px; }
 .filters input, .filters select { width: auto; min-width: 180px; }
+
+/* 视图切换 + 快捷筛选 */
+.view-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg-btn {
+  border: 0; background: transparent; padding: 6px 14px; font-size: 13px;
+  color: var(--fg-soft); cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn.active { background: var(--brand); color: #fff; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  border: 1px solid var(--line); border-radius: 999px; background: transparent;
+  padding: 4px 12px; font-size: 13px; color: var(--fg-soft); cursor: pointer;
+}
+.chip.active { border-color: var(--brand); color: var(--brand); font-weight: 600; }
+.chip-n {
+  display: inline-block; min-width: 18px; text-align: center; margin-left: 2px;
+  background: var(--line); border-radius: 999px; font-size: 12px; padding: 0 5px;
+}
 .change-bar { display: flex; align-items: center; gap: 12px; border-left: 3px solid var(--brand); }
+
+/* 分组段 */
+.sections { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.sec { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--panel); overflow: hidden; }
+.sec-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 14px; border: 0; background: transparent; cursor: pointer;
+  font-size: 14px; text-align: left;
+}
+.sec-caret { display: inline-block; transition: transform 120ms ease-out; color: var(--fg-soft); }
+.sec-caret.open { transform: rotate(90deg); }
+.sec-title { font-weight: 600; }
+.sec-meta { color: var(--fg-soft); font-size: 13px; }
+.sec-select {
+  margin-left: auto; font-size: 13px; color: var(--brand);
+  border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; cursor: pointer;
+}
+.sec-body { border-top: 1px solid var(--line); }
+
+/* 行 */
+.row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line);
+}
+.sec-body .row:last-child { border-bottom: 0; }
+.row-check { width: auto; flex: none; }
+.row-main { flex: 1; min-width: 0; }
+.row-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row-top .num { font-size: 14px; }
+.row-sub { display: flex; gap: 10px; align-items: baseline; margin-top: 2px; min-width: 0; }
+.evt {
+  color: var(--fg-soft); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52ch;
+}
+.evt.dim { font-style: italic; }
+.evt-time { color: var(--fg-soft); font-size: 12px; flex: none; }
+.row-side { flex: none; display: flex; align-items: center; gap: 14px; }
+.get-time { color: var(--fg-soft); font-size: 12px; }
+
 .bulk { border-left: 3px solid var(--brand); }
 .check-list { max-height: 280px; overflow-y: auto; margin: 10px 0; }
 .check-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
@@ -285,4 +547,10 @@ function isChanged(id: string) {
 }
 .modal { width: min(520px, 92vw); margin: 0; box-shadow: var(--shadow-2); }
 .actions { display: flex; gap: 12px; margin-top: 12px; }
+
+@media (max-width: 640px) {
+  .row { flex-wrap: wrap; }
+  .row-side { width: 100%; justify-content: space-between; }
+  .sec-select { flex: none; }
+}
 </style>

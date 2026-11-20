@@ -37,6 +37,9 @@ class TrackingView(PublicIdMixin):
     is_terminal: bool
     simulated: bool = False              # 正式客户页面必须为 false（04 §12.2 用例 12）
     events: list[TrackingEventView] = [] # 时间倒序
+    group_name: str | None = None        # 所属分组名（未分组为 None；列表投影附带）
+    batch_id: str | None = None          # 最近一次提交批次 public_id（P14 分组视图）
+    batch_created_at: str | None = None  # 最近一次提交时间（ISO-8601）
 
 
 class CheckUpdatesRequest(BaseModel):

@@ -274,21 +274,43 @@ class BRepository:
                 "next_sync_at": row[5], "last_success_at": row[6]}
 
     def list_trackings(self, customer_id: int) -> list[dict]:
+        """客户单号列表（结果页）：附分组名与最近一次提交批次（P14 分组视图）。
+
+        批次经 submission_item→submission_batch→submission_operation 按单号
+        关联（idx_submission_item_normalized_number 已建索引）；同号多次提交
+        取最近一次。未分组/从未提交的单号对应字段为 None。
+        """
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT ct.public_id, ct.normalized_number, tp.status,
-                              tp.events, tp.projected_at
+                              tp.events, tp.projected_at, g.name,
+                              op.public_id, op.created_at
                        FROM customer_tracking ct
                        LEFT JOIN tracking_projection tp
                          ON tp.customer_tracking_id=ct.customer_tracking_id
+                       LEFT JOIN target_group g ON g.group_id=ct.group_id
+                       LEFT JOIN LATERAL (
+                           SELECT so.public_id, so.created_at
+                           FROM submission_item si
+                           JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                           JOIN submission_operation so
+                             ON so.operation_id=sb.operation_id
+                           WHERE si.normalized_number=ct.normalized_number
+                             AND so.customer_id=ct.customer_id
+                           ORDER BY so.created_at DESC LIMIT 1
+                       ) op ON true
                        WHERE ct.customer_id=%s ORDER BY ct.created_at DESC LIMIT 1000""",
                     (customer_id,),
                 )
                 rows = cur.fetchall()
         return [{"customer_tracking_id": str(r[0]), "normalized_number": r[1],
                  "status": r[2], "events": r[3] or [], "projected_at": r[4],
-                 "next_sync_at": None, "last_success_at": r[4]} for r in rows]
+                 "next_sync_at": None, "last_success_at": r[4],
+                 "group_name": r[5],
+                 "batch_id": str(r[6]) if r[6] else None,
+                 "batch_created_at": r[7].isoformat() if r[7] else None}
+                for r in rows]
 
     def projection_events(self, customer_id: int, *, after: int = 0,
                           limit: int = 50) -> list[dict]:

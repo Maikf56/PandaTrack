@@ -141,6 +141,7 @@ function fmt(t?: string): string {
         <span v-if="g.archived" class="badge muted">已归档</span>
         <span class="meta">{{ g.tracking_count }} 单号 · {{ g.batch_count }} 批次</span>
         <span class="meta">{{ g.archived ? '—' : distText(g) }}</span>
+        <RouterLink class="group-results-link" :to="`/results?group=${encodeURIComponent(g.name)}`">查看该组结果</RouterLink>
       </div>
 
       <div class="group-actions" @click.stop>
