@@ -194,4 +194,8 @@ function stateText(s: string): string {
 @media (max-width: 860px) {
   .cards-row { grid-template-columns: repeat(2, 1fr); }
 }
+@media (max-width: 480px) {
+  .cards-row { grid-template-columns: 1fr; }
+  .quick-card input { max-width: none; }
+}
 </style>

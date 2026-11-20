@@ -313,11 +313,34 @@ tr.flash { animation: flash-line 1.2s ease-out; }
   .ws-shell { flex-direction: column; }
   .ws-nav {
     width: 100%; height: auto; position: static; flex-direction: row;
-    align-items: center; overflow-x: auto; padding: 10px 14px;
+    align-items: center; overflow-x: auto; padding: 8px 10px; gap: 10px;
   }
-  .ws-nav nav { flex-direction: row; margin-top: 0; gap: 10px; }
+  .ws-nav nav { flex-direction: row; margin-top: 0; gap: 4px; }
+  .ws-nav nav a { padding: 6px 10px; font-size: 13.5px; white-space: nowrap; }
   .nav-group { display: none; }
   .brand-logo { width: 96px; }
   table.list { display: block; overflow-x: auto; }
+  /* 顶栏窄屏换行收纳（邮箱在 560px 以下隐藏，余额保留） */
+  .ws-topbar { flex-wrap: wrap; gap: 8px 12px; padding: 8px 14px; }
+  /* 公共区导航窄屏换行，不再横向溢出 */
+  .pub-nav { flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px; }
+  .pub-nav nav { flex-wrap: wrap; gap: 10px 14px; }
+  .pub-main { padding: 24px 16px; }
+  .ws-main { padding: 18px 14px 40px; }
+  .card { padding: 14px; }
+  .page-title { font-size: 20px; }
+  /* iOS 聚焦自动放大阈值是 16px：窄屏统一 16px 防聚焦缩放 */
+  textarea, input, select { font-size: 16px; }
+}
+
+@media (max-width: 560px) {
+  .brand-logo { width: 84px; }
+  .topbar-mail { display: none; }
+  .pub-main { padding: 20px 12px; }
+  .pub-nav nav { font-size: 14px; }
+  .conn-dot { font-size: 12px; }
+  .lang-pick { font-size: 12px; }
+  .btn { padding: 10px 16px; }
+  .kv li { flex-wrap: wrap; gap: 2px 12px; }
 }
 </style>

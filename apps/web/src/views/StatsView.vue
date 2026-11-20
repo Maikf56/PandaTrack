@@ -120,4 +120,5 @@ const maxDaily = computed(() =>
 .bar { background: var(--brand-soft, #bde); border-radius: 4px 4px 0 0; min-height: 4px; }
 .bar-label { font-size: 10px; color: var(--fg-soft); text-align: center; }
 @media (max-width: 860px) { .cards-row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .cards-row { grid-template-columns: 1fr; } }
 </style>

@@ -65,7 +65,7 @@ const RULES = [
   padding: 7px 16px; font-size: 14px; font-weight: 500;
 }
 .sec-title { font-size: 18px; margin: 34px 0 14px; }
-.rules-card { text-align: left; padding: 0; overflow: hidden; }
+.rules-card { text-align: left; padding: 0; overflow-x: auto; overflow-y: hidden; }
 .rules { width: 100%; border-collapse: collapse; }
 .rules th, .rules td { text-align: left; padding: 12px 18px; border-bottom: 1px solid var(--line); }
 .rules th { color: var(--fg-soft); font-weight: 500; font-size: 13px; }
