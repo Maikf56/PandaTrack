@@ -813,6 +813,48 @@ class BRepository:
                  "created_at": r[6].isoformat() if r[6] else ""}
                 for r in rows], total)
 
+    # ---- 邀请管理（客户邀请客户，b/0007）----
+    def admin_invites(self, *, limit: int = 100) -> dict:
+        """管理端邀请总览：邀请码列表 + 邀请记录（跨客户）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT ic.invite_code_id, ic.code, ic.created_at,
+                              c.customer_id, c.email, c.name,
+                              (SELECT count(*) FROM invite_friend f
+                                WHERE f.inviter_customer_id = c.customer_id),
+                              (SELECT coalesce(sum(f.points_awarded), 0)
+                                FROM invite_friend f
+                                WHERE f.inviter_customer_id = c.customer_id)
+                       FROM invite_code ic
+                       JOIN customer c ON c.customer_id = ic.customer_id
+                       ORDER BY ic.created_at DESC LIMIT %s""",
+                    (limit,))
+                codes = cur.fetchall()
+                cur.execute(
+                    """SELECT f.friend_id, f.friend_email, f.status,
+                              f.points_awarded, f.created_at,
+                              ci.email AS inviter_email,
+                              cf.email AS friend_registered_email
+                       FROM invite_friend f
+                       JOIN customer ci ON ci.customer_id = f.inviter_customer_id
+                       LEFT JOIN customer cf
+                             ON cf.customer_id = f.friend_customer_id
+                       ORDER BY f.created_at DESC LIMIT %s""",
+                    (limit,))
+                friends = cur.fetchall()
+        return {
+            "codes": [{"invite_code_id": r[0], "code": r[1],
+                       "created_at": r[2].isoformat() if r[2] else "",
+                       "customer_id": r[3], "email": r[4], "name": r[5],
+                       "friends": r[6], "awarded": r[7]} for r in codes],
+            "friends": [{"friend_id": r[0], "friend_email": r[1],
+                         "status": r[2], "points_awarded": r[3],
+                         "created_at": r[4].isoformat() if r[4] else "",
+                         "inviter_email": r[5],
+                         "friend_registered_email": r[6]} for r in friends],
+        }
+
     # ---- 系统运行日志（A 库 run_log；worker 每轮 cycle 落一行，a/0003）----
     def run_log(self, *, limit: int = 100, offset: int = 0,
                 level: str | None = None) -> tuple[list[dict], int]:
@@ -845,19 +887,19 @@ class BRepository:
                  for r in rows], total)
 
     def recent_attempts(self, *, limit: int = 50) -> list[dict]:
-        """最近采集明细（fetch_attempt_log + fetch_job + tracking）：
-        单号、任务状态与错误类别，供"系统运行日志"页看每单结果。"""
+        """最近采集明细（provider_attempt + fetch_job + tracking）：
+        单号、任务状态、页面证据与错误类别，供"系统运行日志"页排查爬虫。"""
         with self.connect_a() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT a.attempt_id, a.provider_code, a.error_class,
-                              a.quality_gates, a.created_at,
+                    """SELECT pa.attempt_id, pa.provider_code, pa.error_class,
+                              pa.quality_gates, pa.created_at,
                               j.job_id, j.state, j.attempt,
                               t.normalized_number
-                       FROM fetch_attempt_log a
-                       JOIN fetch_job j ON j.job_id = a.job_id
+                       FROM provider_attempt pa
+                       JOIN fetch_job j ON j.job_id = pa.job_id
                        JOIN tracking t ON t.tracking_id = j.tracking_id
-                       ORDER BY a.created_at DESC LIMIT %s""",
+                       ORDER BY pa.created_at DESC LIMIT %s""",
                     (limit,))
                 rows = cur.fetchall()
         return [{"attempt_id": r[0], "provider_code": r[1],
@@ -865,6 +907,52 @@ class BRepository:
                  "created_at": r[4].isoformat() if r[4] else "",
                  "job_id": r[5], "state": r[6], "attempt": r[7],
                  "number": r[8]} for r in rows]
+
+    def dead_letters(self, *, limit: int = 200) -> tuple[list[dict], int]:
+        """死信任务明细（单号 + 失败类别 + 尝试次数），供管理端人工排查。"""
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM fetch_job WHERE state='dead_letter'")
+                total = cur.fetchone()[0]
+                cur.execute(
+                    """SELECT j.job_id, t.normalized_number, j.error_class,
+                              j.attempt, j.max_attempts, j.updated_at
+                       FROM fetch_job j
+                       JOIN tracking t ON t.tracking_id = j.tracking_id
+                       WHERE j.state='dead_letter'
+                       ORDER BY j.updated_at DESC LIMIT %s""",
+                    (limit,))
+                rows = cur.fetchall()
+        return ([{"job_id": r[0], "number": r[1], "error_class": r[2],
+                  "attempt": r[3], "max_attempts": r[4],
+                  "updated_at": r[5].isoformat() if r[5] else ""}
+                 for r in rows], total)
+
+    def requeue_dead_letters(self, job_ids: list[int] | None = None) -> int:
+        """死信复活：重置为 pending 重新排队（attempt 归零，给足重试机会）。"""
+        with self.connect_a() as conn:
+            with conn.cursor() as cur:
+                if job_ids:
+                    cur.execute(
+                        """UPDATE fetch_job
+                           SET state='pending', attempt=0, error_class=NULL,
+                               retry_at=now(), lease_until=NULL, worker_id=NULL,
+                               finished_at=NULL, updated_at=now()
+                           WHERE state='dead_letter' AND job_id = ANY(%s)
+                           RETURNING job_id""",
+                        (job_ids,))
+                else:
+                    cur.execute(
+                        """UPDATE fetch_job
+                           SET state='pending', attempt=0, error_class=NULL,
+                               retry_at=now(), lease_until=NULL, worker_id=NULL,
+                               finished_at=NULL, updated_at=now()
+                           WHERE state='dead_letter'
+                           RETURNING job_id""")
+                n = len(cur.fetchall())
+            conn.commit()
+        return n
 
     # ============ 次要页面：组与批次 / 导入 / 导出 / 统计 / 设置 ============
     # （04 §5.8-5.12；b/0004 扩列。全部 tenant scope，对外 public_id。）

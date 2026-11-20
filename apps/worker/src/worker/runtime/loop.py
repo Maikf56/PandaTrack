@@ -222,6 +222,8 @@ class WorkerLoop:
         if not inputs:
             return report
 
+        number_by_job = {j["job_id"]: n for j, n in inputs}
+
         try:
             result = self._fetch([n for _, n in inputs])
         except Exception as exc:  # ProviderError 等：整批按错误类别结算
@@ -234,6 +236,7 @@ class WorkerLoop:
                     outcome = self._settle(lease, j, ec)
                     setattr(report, outcome, getattr(report, outcome) + 1)
                 report.error_class = ec
+            self._record_attempts(number_by_job, {}, ec)
             return report
 
         # 4) 熔断钩子：成功复位 / 失败计数（circuit_open 自反馈除外）。
@@ -267,4 +270,41 @@ class WorkerLoop:
                     lease.ack(j["job_id"])
                     outcome = "succeeded"
                 setattr(report, outcome, getattr(report, outcome) + 1)
+
+        # 7) 采集尝试落库（爬虫日志）：成功/失败都记，供管理端排查。
+        self._record_attempts(number_by_job, item_by_number, None)
         return report
+
+    def _record_attempts(self, number_by_job: dict[int, str],
+                         item_by_number: dict[str, ProviderItem],
+                         fallback_ec: str | None) -> None:
+        """每单采集尝试写一行 provider_attempt（页面类别/HTTP 状态/证据引用）。
+
+        管理端"爬虫日志"数据源；成功记 NULL error_class + 页面证据，
+        失败记错误类别（batch 级失败用 fallback_ec）。失败不致命。
+        """
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    for job_id, number in number_by_job.items():
+                        item = item_by_number.get(number)
+                        ec = fallback_ec
+                        gates = None
+                        if item is not None:
+                            ec = (item.item_error_class or item.error_class
+                                  or fallback_ec)
+                            gates = json.dumps({
+                                "page_class": item.page_class,
+                                "http_status": item.http_status,
+                                "page_valid": item.page_valid,
+                                "confidence": item.confidence,
+                                "evidence_ref": item.raw_payload_ref,
+                            }, ensure_ascii=False, default=str)
+                        cur.execute(
+                            """INSERT INTO provider_attempt
+                               (job_id, provider_code, error_class, quality_gates)
+                               VALUES (%s, 'usps_web', %s, %s)""",
+                            (job_id, ec, gates))
+                conn.commit()
+        except Exception:
+            pass
