@@ -64,8 +64,16 @@ def register(payload: RegisterRequest, request: Request,
             repo.login_throttle_locked_until("register", key))
         if retry is not None:
             raise ApiProblem(codes.RATE_LIMITED, {"retry_after_seconds": retry})
+    # 邀请码校验（P17）：无效码在防爆破检查后、建号前拒绝（笔误不记防爆破失败）。
+    inviter_id = None
+    if payload.invite_code:
+        inviter_id = repo.resolve_invite_code(payload.invite_code)
+        if inviter_id is None:
+            raise ApiProblem(codes.INVALID_INPUT,
+                             {"message": "邀请码无效，可留空或向邀请人确认"})
     try:
-        repo.register_customer(email, BRepository.hash_password(payload.password))
+        repo.register_customer(email, BRepository.hash_password(payload.password),
+                               inviter_customer_id=inviter_id)
     except Exception as exc:  # 唯一冲突 → 409；其余交全局错误处理
         for key in throttle_keys(ip, email):
             repo.login_throttle_record_fail("register", key,

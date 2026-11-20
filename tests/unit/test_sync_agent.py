@@ -112,6 +112,7 @@ class TestSyncAgent:
         assert facts[TID]["normalized_number"] == NUM
         assert set(evs[0].keys()) == {"occurred_at", "time_confidence",
                                       "status_key", "label_zh", "description",
+                                      "description_zh",
                                       "location", "event_code"}
         assert evs[0]["status_key"] == "in_transit"
         assert evs[0]["label_zh"]  # 权威字典白话标签

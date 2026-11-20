@@ -1,8 +1,9 @@
-"""设置页路由（04 §5.12：改密码/会话管理/显示偏好）。"""
+"""设置页路由（04 §5.12：改密码/会话管理/显示偏好；P17：自助资料）。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from contracts.customer import CustomerProfile, ProfileUpdateRequest
 from contracts.groups_exports import (
     ChangePasswordRequest, PreferencesUpdate, SessionView,
 )
@@ -13,6 +14,26 @@ from api.deps import Subject, get_repo, require_customer
 from api.errors import ApiProblem
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+
+
+@router.get("/profile", response_model=CustomerProfile)
+def get_profile(subject: Subject = Depends(require_customer),
+                repo: BRepository = Depends(get_repo)):
+    row = repo.get_customer_profile(subject.customer_id)
+    if row is None:
+        raise ApiProblem(codes.FORBIDDEN)
+    return CustomerProfile(**row)
+
+
+@router.patch("/profile", response_model=CustomerProfile)
+def update_profile(payload: ProfileUpdateRequest,
+                   subject: Subject = Depends(require_customer),
+                   repo: BRepository = Depends(get_repo)):
+    """客户自助资料维护（P17）：仅 name/phone/remark，邮箱不在自助范围。"""
+    patch = {k: v.strip() for k, v in payload.model_dump().items() if v is not None}
+    if not patch:
+        raise ApiProblem(codes.INVALID_INPUT)
+    return CustomerProfile(**repo.update_customer_profile_self(subject.customer_id, patch))
 
 
 @router.post("/password")

@@ -14,19 +14,49 @@ const oldPassword = ref('')
 const newPassword = ref('')
 const pwdBusy = ref(false)
 
+// 自助资料（P17）：name/phone/remark；邮箱不可自助改
+const profile = ref({ email: '', name: '', phone: '', remark: '' })
+const profileBusy = ref(false)
+
 const sessions = ref<SessionView[]>([])
 
 onMounted(async () => {
   await loadSession(true)
   try {
-    const ss = await api.get<SessionView[]>('/api/v1/settings/sessions')
+    const [ss, pf] = await Promise.all([
+      api.get<SessionView[]>('/api/v1/settings/sessions'),
+      api.get<{ email: string; name: string; phone: string; remark: string }>(
+        '/api/v1/settings/profile'),
+    ])
     sessions.value = ss.data
+    profile.value = pf.data
   } catch (e) {
     error.value = (e as { message: string }).message
   } finally {
     loading.value = false
   }
 })
+
+async function saveProfile() {
+  if (profileBusy.value) return
+  error.value = ''
+  notice.value = ''
+  profileBusy.value = true
+  try {
+    const { data } = await api.patch<{ email: string; name: string; phone: string; remark: string }>(
+      '/api/v1/settings/profile', {
+        name: profile.value.name,
+        phone: profile.value.phone,
+        remark: profile.value.remark,
+      })
+    profile.value = data
+    notice.value = t('settings.profile_ok')
+  } catch (e) {
+    error.value = (e as { message: string }).message
+  } finally {
+    profileBusy.value = false
+  }
+}
 
 async function changePassword() {
   if (pwdBusy.value) return
@@ -80,6 +110,23 @@ function fmt(s?: string): string {
 
     <template v-else>
       <div class="card">
+        <h3>{{ t('settings.profile_title') }}</h3>
+        <p class="hint">{{ profile.email }}</p>
+        <div class="form-row">
+          <input v-model="profile.name" :placeholder="t('settings.profile_name')" maxlength="100" />
+          <input v-model="profile.phone" :placeholder="t('settings.profile_phone')" maxlength="30" />
+        </div>
+        <textarea v-model="profile.remark" rows="2" class="profile-remark"
+                  :placeholder="t('settings.profile_remark')" maxlength="500"></textarea>
+        <div class="form-row">
+          <button class="btn sm" :disabled="profileBusy" @click="saveProfile">
+            {{ profileBusy ? t('common.loading') : t('settings.profile_save') }}
+          </button>
+        </div>
+        <p class="hint">{{ t('settings.profile_email_hint') }}</p>
+      </div>
+
+      <div class="card">
         <h3>{{ t('settings.pwd_title') }}</h3>
         <p class="hint">{{ session.me?.email }}</p>
         <div class="form-row">
@@ -118,6 +165,7 @@ function fmt(s?: string): string {
 <style scoped>
 .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 .form-row input { max-width: 220px; }
+.profile-remark { width: 100%; max-width: 460px; display: block; margin: 8px 0; }
 .ok-box { border-left: 4px solid var(--ok, #3a3); padding: 8px 12px; }
 .badge.muted { opacity: 0.6; }
 </style>

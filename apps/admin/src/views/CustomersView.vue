@@ -34,6 +34,15 @@ const adjustDelta = ref<number | null>(null)
 const adjustDesc = ref('')
 const adjustSubmitting = ref(false)
 
+// ---- 新增客户（P17：手动开户，建号即 active，可带初始积分）----
+const createOpen = ref(false)
+const createForm = ref({ email: '', password: '', name: '', phone: '', remark: '', initial_points: 0 as number | null })
+const createSubmitting = ref(false)
+
+// ---- 抽屉内资料编辑 / 重置密码（P17）----
+const editForm = ref({ name: '', phone: '', remark: '', email: '', new_password: '' })
+const editSubmitting = ref(false)
+
 onMounted(reload)
 
 async function reload() {
@@ -65,7 +74,10 @@ const filtered = computed(() =>
     if (statusFilter.value && row.status !== statusFilter.value) return false
     const q = search.value.trim().toLowerCase()
     if (!q) return true
-    return row.email.toLowerCase().includes(q) || row.public_id.toLowerCase().includes(q)
+    return row.email.toLowerCase().includes(q)
+      || row.public_id.toLowerCase().includes(q)
+      || (row.name ?? '').toLowerCase().includes(q)
+      || (row.phone ?? '').includes(q)
   }),
 )
 
@@ -74,6 +86,11 @@ async function openDrawer(row: CustomerRow) {
   drawerCustomer.value = row
   drawerLedger.value = []
   drawerAudit.value = []
+  // 资料编辑表单回填（P17）
+  editForm.value = {
+    name: row.name ?? '', phone: row.phone ?? '', remark: row.remark ?? '',
+    email: row.email, new_password: '',
+  }
   const jobs: Promise<unknown>[] = []
   if (canReadBilling) {
     jobs.push(api.get<{ items: LedgerRow[] }>('/api/v1/admin/billing/ledger', {
@@ -177,6 +194,68 @@ async function submitAdjust() {
   }
 }
 
+// ---- 新增客户提交（P17）----
+function openCreate() {
+  createForm.value = { email: '', password: '', name: '', phone: '', remark: '', initial_points: 0 }
+  createOpen.value = true
+}
+
+async function submitCreate() {
+  const f = createForm.value
+  if (!f.email.trim() || (f.password ?? '').length < 8) {
+    error.value = '邮箱与初始密码（≥8 位）必填'
+    return
+  }
+  createSubmitting.value = true
+  error.value = ''
+  try {
+    await api.post('/api/v1/admin/customers', {
+      email: f.email.trim(),
+      password: f.password,
+      name: f.name.trim(),
+      phone: f.phone.trim(),
+      remark: f.remark.trim(),
+      initial_points: f.initial_points ?? 0,
+    })
+    feedback.value = `客户 ${f.email.trim()} 已开户并写入审计`
+    createOpen.value = false
+    await reload()
+  } catch (e) {
+    error.value = (e as { message: string }).message
+  } finally {
+    createSubmitting.value = false
+  }
+}
+
+// ---- 抽屉内资料保存 / 重置密码（P17；审计只记字段名，不记密码）----
+async function submitProfile() {
+  const cust = drawerCustomer.value
+  if (!cust) return
+  const f = editForm.value
+  const patch: Record<string, string> = {}
+  if (f.name !== (cust.name ?? '')) patch.name = f.name
+  if (f.phone !== (cust.phone ?? '')) patch.phone = f.phone
+  if (f.remark !== (cust.remark ?? '')) patch.remark = f.remark
+  if (f.email !== cust.email) patch.email = f.email.trim()
+  if (f.new_password) patch.new_password = f.new_password
+  if (!Object.keys(patch).length) {
+    error.value = '没有改动，无需保存'
+    return
+  }
+  editSubmitting.value = true
+  error.value = ''
+  try {
+    await api.patch(`/api/v1/admin/customers/${cust.customer_id}`, undefined, patch)
+    feedback.value = `客户 ${cust.email} 资料已更新并写入审计`
+    f.new_password = ''
+    await reload()
+  } catch (e) {
+    error.value = (e as { message: string }).message
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 const statusBadgeClass: Record<string, string> = {
   active: 'ok', suspended: 'warn', deleted: 'err', pending: 'warn',
 }
@@ -184,10 +263,14 @@ const statusLabelZh: Record<string, string> = {
   active: '正常', suspended: '已冻结', deleted: '已删除', pending: '待审核',
 }
 const ledgerTypeZh: Record<string, string> = {
-  charge: '提交扣费', topup: '充值', bonus: '赠送', adjust: '人工调整', reversal: '冲正/退款',
+  charge: '提交扣费', topup: '充值', bonus: '赠送', adjust: '人工调整',
+  admin_adjust: '人工调整', reversal: '冲正/退款', redeem: '兑换码',
+  invite_reward: '邀请奖励',
 }
 const AUDIT_ACTION_ZH: Record<string, string> = {
   customer_status_change: '客户状态变更',
+  customer_created: '客户新建',
+  customer_profile_update: '客户资料变更',
   provider_toggle: 'Provider 启停',
   points_adjust: '积分调整',
 }
@@ -209,7 +292,7 @@ function fmtTime(v: string | null): string {
     <div class="card form-row">
       <div>
         <label for="cust-search" class="field-label">搜索客户</label>
-        <input id="cust-search" v-model="search" placeholder="邮箱或客户 ID 片段" />
+        <input id="cust-search" v-model="search" placeholder="邮箱 / 姓名 / 电话 / 客户 ID 片段" />
       </div>
       <div style="max-width: 180px">
         <label for="cust-status" class="field-label">状态</label>
@@ -221,6 +304,9 @@ function fmtTime(v: string | null): string {
           <option value="deleted">已删除</option>
         </select>
       </div>
+      <div v-if="canWrite" style="align-self: flex-end">
+        <button class="btn" @click="openCreate">新增客户</button>
+      </div>
     </div>
 
     <p v-if="error" class="error-box" role="alert">{{ error }}</p>
@@ -231,6 +317,8 @@ function fmtTime(v: string | null): string {
       <thead>
         <tr>
           <th>邮箱</th>
+          <th>姓名</th>
+          <th>电话</th>
           <th>余额</th>
           <th>状态</th>
           <th>租户</th>
@@ -244,6 +332,8 @@ function fmtTime(v: string | null): string {
             {{ row.email }}
             <span v-if="row.status === 'active'" class="row-open hint">详情 →</span>
           </td>
+          <td>{{ row.name || '—' }}</td>
+          <td>{{ row.phone || '—' }}</td>
           <td class="mono">{{ row.balance ?? 0 }} 积分</td>
           <td>
             <span class="badge" :class="statusBadgeClass[row.status] ?? ''">
@@ -306,6 +396,37 @@ function fmtTime(v: string | null): string {
             恢复客户
           </button>
         </div>
+
+        <section v-if="canWrite" class="profile-edit">
+          <h4>资料与账号（变更写审计）</h4>
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="edit-name">姓名</label>
+              <input id="edit-name" v-model="editForm.name" placeholder="客户姓名" />
+            </div>
+            <div>
+              <label class="field-label" for="edit-phone">电话</label>
+              <input id="edit-phone" v-model="editForm.phone" placeholder="联系电话" />
+            </div>
+          </div>
+          <label class="field-label" for="edit-remark">备注</label>
+          <textarea id="edit-remark" v-model="editForm.remark" rows="2"
+                    placeholder="例如：线下月结、淘宝店铺「XX」"></textarea>
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="edit-email">邮箱（登录账号）</label>
+              <input id="edit-email" v-model="editForm.email" type="email" />
+            </div>
+            <div>
+              <label class="field-label" for="edit-pwd">重置密码（留空不改）</label>
+              <input id="edit-pwd" v-model="editForm.new_password" type="password"
+                     autocomplete="new-password" placeholder="≥8 位新密码" />
+            </div>
+          </div>
+          <button class="btn sm" :disabled="editSubmitting" @click="submitProfile">
+            {{ editSubmitting ? '保存中…' : '保存资料' }}
+          </button>
+        </section>
 
         <div v-if="drawerLoading" class="hint" role="status">正在加载流水与审计…</div>
 
@@ -388,6 +509,47 @@ function fmtTime(v: string | null): string {
         </div>
       </div>
     </div>
+    <!-- 新增客户（P17）：建号即 active，初始积分写 admin_adjust 台账 -->
+    <div v-if="createOpen" class="modal-mask" @click.self="createOpen = false">
+      <div class="modal card" role="dialog" aria-modal="true" aria-label="新增客户">
+        <h3>新增客户</h3>
+        <p class="hint">手动开户：邮箱为登录账号，建号立即生效（无需审核）。</p>
+        <div class="form-row">
+          <div>
+            <label for="create-email" class="field-label">邮箱 *</label>
+            <input id="create-email" v-model="createForm.email" type="email" autocomplete="off" />
+          </div>
+          <div>
+            <label for="create-pwd" class="field-label">初始密码 *（≥8 位）</label>
+            <input id="create-pwd" v-model="createForm.password" type="text" autocomplete="off" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            <label for="create-name" class="field-label">姓名</label>
+            <input id="create-name" v-model="createForm.name" />
+          </div>
+          <div>
+            <label for="create-phone" class="field-label">电话</label>
+            <input id="create-phone" v-model="createForm.phone" />
+          </div>
+          <div>
+            <label for="create-points" class="field-label">初始积分</label>
+            <input id="create-points" v-model.number="createForm.initial_points" type="number" min="0" class="mono" />
+          </div>
+        </div>
+        <label for="create-remark" class="field-label">备注</label>
+        <textarea id="create-remark" v-model="createForm.remark" rows="2"
+                  placeholder="例如：线下月结、来源渠道"></textarea>
+        <p class="hint">开户动作与初始积分写入审计；重复邮箱会提示已注册。</p>
+        <div class="actions">
+          <button class="btn" :disabled="createSubmitting" @click="submitCreate">
+            {{ createSubmitting ? '开户中…' : '确认开户' }}
+          </button>
+          <button class="btn ghost" @click="createOpen = false">取消</button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -421,6 +583,13 @@ table.clickable tbody tr { cursor: pointer; }
 .stat-unit { font-size: 13px; font-weight: 500; color: var(--fg-soft); margin-left: 4px; }
 .drawer-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
 .drawer h4 { margin: 18px 0 8px; font-size: 15px; }
+.profile-edit {
+  margin: 6px 0 10px; padding: 12px; border: 1px solid var(--line);
+  border-radius: 8px; display: grid; gap: 8px;
+}
+.profile-edit .form-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 0; }
+.profile-edit .form-row > div { flex: 1; min-width: 140px; }
+.profile-edit textarea, .profile-edit input { width: 100%; }
 .audit-mini { list-style: none; margin: 0; padding: 0; }
 .audit-mini li {
   display: flex; gap: 12px; align-items: baseline; padding: 7px 0;

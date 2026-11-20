@@ -35,13 +35,18 @@ class AuthMeResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """开放注册（P16）：注册即建号，status=pending，管理员审核通过后才可登录。"""
+    """开放注册（P16）：注册即建号，status=pending，管理员审核通过后才可登录。
+
+    invite_code 可选（P17 邀请闭环）：有效邀请码记入 invite_friend（邀请关系），
+    好友审核通过激活时邀请人获 500 积分奖励；无效邀请码拒绝注册（提前暴露笔误）。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     client_request_id: str = Field(min_length=8, max_length=50)
+    invite_code: str | None = Field(default=None, max_length=16)
 
 
 class RegisterResponse(BaseModel):

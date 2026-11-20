@@ -9,6 +9,7 @@ import { newRequestId } from '../logic/draft'
 const email = ref('')
 const password = ref('')
 const confirm = ref('')
+const inviteCode = ref('')
 const error = ref('')
 const submitting = ref(false)
 const done = ref(false)
@@ -27,10 +28,12 @@ async function submit() {
   }
   submitting.value = true
   try {
+    const code = inviteCode.value.trim().toUpperCase()
     await api.post('/api/v1/auth/register', {
       email: mail,
       password: password.value,
       client_request_id: newRequestId(),
+      ...(code ? { invite_code: code } : {}),
     })
     done.value = true
   } catch (e) {
@@ -59,6 +62,10 @@ async function submit() {
           <input id="reg-pw" v-model="password" type="password" autocomplete="new-password" required minlength="8" />
           <label for="reg-pw2">{{ t('register.confirm') }}</label>
           <input id="reg-pw2" v-model="confirm" type="password" autocomplete="new-password" required minlength="8" />
+          <label for="reg-invite">{{ t('register.invite_code') }}</label>
+          <input id="reg-invite" v-model="inviteCode" autocomplete="off" maxlength="16"
+                 style="text-transform: uppercase" />
+          <p class="hint">{{ t('register.invite_hint') }}</p>
           <p v-if="error" class="error-box" role="alert">{{ error }}</p>
           <button class="btn reg-btn" type="submit" :disabled="submitting">
             {{ submitting ? t('register.submitting') : t('register.submit') }}
