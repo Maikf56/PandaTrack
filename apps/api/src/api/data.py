@@ -875,7 +875,7 @@ class BRepository:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT g.group_id, g.public_id, g.name, g.is_default,
-                              g.archived_at, g.created_at,
+                              g.archived_at, g.created_at, g.remark,
                               (SELECT count(*) FROM customer_tracking ct
                                 WHERE ct.group_id = g.group_id) AS tracking_count,
                               (SELECT count(*) FROM submission_operation so
@@ -898,8 +898,8 @@ class BRepository:
                 for gid, status, n in cur.fetchall():
                     dist.setdefault(gid, {})[status or "other"] = n
         return [{"id": str(r[1]), "name": r[2], "is_default": r[3],
-                 "archived": r[4] is not None,
-                 "tracking_count": r[6], "batch_count": r[7],
+                 "archived": r[4] is not None, "remark": r[6] or "",
+                 "tracking_count": r[7], "batch_count": r[8],
                  "status_distribution": dist.get(r[0], {}),
                  "created_at": r[5].isoformat() if r[5] else ""}
                 for r in rows]
@@ -918,13 +918,25 @@ class BRepository:
                 "status_distribution": {}, "created_at": ""}
 
     def rename_group(self, customer_id: int, group_public_id: str,
-                     name: str) -> bool:
+                     name: str | None = None,
+                     remark: str | None = None) -> bool:
+        """组更新（P18 扩展）：name / remark 至少传一个，PATCH 语义。"""
+        sets, args = [], []
+        if name is not None:
+            sets.append("name=%s")
+            args.append(name)
+        if remark is not None:
+            sets.append("remark=%s")
+            args.append(remark)
+        if not sets:
+            return False
+        args.extend([customer_id, group_public_id])
         return self._group_update(
             customer_id, group_public_id,
-            """UPDATE target_group SET name=%s, updated_at=now()
+            f"""UPDATE target_group SET {', '.join(sets)}, updated_at=now()
                WHERE customer_id=%s AND public_id=%s
                RETURNING group_id""",
-            (name, customer_id, group_public_id))
+            tuple(args))
 
     def archive_group(self, customer_id: int, group_public_id: str,
                       archive: bool) -> bool:
@@ -1015,20 +1027,27 @@ class BRepository:
         return gid
 
     def assign_operation_group(self, customer_id: int,
-                               operation_public_id: str, group_id: int) -> None:
-        """批次归组 + 单号补挂组（仅补空缺，不覆盖客户手动分组）。"""
+                               operation_public_id: str, group_id: int,
+                               *, override_tracking: bool = False) -> None:
+        """批次归组 + 单号挂组（P17 修订）。
+
+        override_tracking=False（自动挂默认组）：仅补空缺，不覆盖客户
+        手动分组。override_tracking=True（客户显式选择目标组）：客户想
+        放哪个组是客户的自由——批次内全部单号无条件迁移到目标组。
+        """
         with self.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """UPDATE submission_operation so SET group_id=%s
                        FROM (SELECT operation_id FROM submission_operation
                              WHERE public_id=%s AND customer_id=%s) op
-                       WHERE so.operation_id = op.operation_id
-                         AND so.group_id IS NULL""",
+                       WHERE so.operation_id = op.operation_id""",
                     (group_id, operation_public_id, customer_id))
+                tracking_where = (
+                    "" if override_tracking else "AND ct.group_id IS NULL")
                 cur.execute(
-                    """UPDATE customer_tracking ct SET group_id=%s
-                       WHERE ct.customer_id=%s AND ct.group_id IS NULL
+                    f"""UPDATE customer_tracking ct SET group_id=%s
+                       WHERE ct.customer_id=%s {tracking_where}
                          AND ct.normalized_number IN (
                            SELECT si.normalized_number
                            FROM submission_item si
@@ -1039,6 +1058,94 @@ class BRepository:
                              AND si.normalized_number IS NOT NULL)""",
                     (group_id, customer_id, operation_public_id))
             conn.commit()
+
+    def resolve_group_id(self, customer_id: int,
+                         group_public_id: str) -> int | None:
+        """组 public_id → 内部 group_id（P17 批次移动用）。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT group_id FROM target_group
+                       WHERE public_id=%s AND customer_id=%s""",
+                    (group_public_id, customer_id))
+                row = cur.fetchone()
+        return row[0] if row else None
+
+    def move_batch(self, customer_id: int, batch_public_id: str,
+                   target_group_id: int) -> bool:
+        """批次移动到目标组（P17）：操作换组，批次内全部单号跟随移动。
+
+        与受理期 assign_operation_group（仅补空缺）不同，这是客户显式
+        操作，无条件覆盖目标组归属。
+        """
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT operation_id FROM submission_operation
+                       WHERE public_id=%s AND customer_id=%s""",
+                    (batch_public_id, customer_id))
+                row = cur.fetchone()
+                if row is None:
+                    return False
+                op_id = row[0]
+                cur.execute(
+                    """SELECT 1 FROM target_group
+                       WHERE group_id=%s AND customer_id=%s""",
+                    (target_group_id, customer_id))
+                if cur.fetchone() is None:
+                    raise ValueError("target group not found")
+                cur.execute(
+                    """UPDATE submission_operation SET group_id=%s
+                       WHERE operation_id=%s""", (target_group_id, op_id))
+                cur.execute(
+                    """UPDATE customer_tracking ct SET group_id=%s
+                       WHERE ct.customer_id=%s AND ct.normalized_number IN (
+                         SELECT si.normalized_number FROM submission_item si
+                         JOIN submission_batch sb ON sb.batch_id=si.batch_id
+                         WHERE sb.operation_id=%s
+                           AND si.normalized_number IS NOT NULL)""",
+                    (target_group_id, customer_id, op_id))
+            conn.commit()
+        return True
+
+    def delete_batch(self, customer_id: int, batch_public_id: str) -> bool:
+        """删除批次（P17）：移除提交结构（操作/批次/明细/预留/快照/投影事件），
+        单号查询记录（customer_tracking/tracking_projection）与积分流水保留，
+        billing_outbox 为无外键事件历史一并保留。"""
+        with self.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT operation_id FROM submission_operation
+                       WHERE public_id=%s AND customer_id=%s""",
+                    (batch_public_id, customer_id))
+                row = cur.fetchone()
+                if row is None:
+                    return False
+                op_id = row[0]
+                cur.execute(
+                    """DELETE FROM submission_item WHERE batch_id IN
+                       (SELECT batch_id FROM submission_batch
+                        WHERE operation_id=%s)""", (op_id,))
+                cur.execute(
+                    "DELETE FROM submission_batch WHERE operation_id=%s",
+                    (op_id,))
+                cur.execute(
+                    "DELETE FROM charge_reservation WHERE operation_id=%s",
+                    (op_id,))
+                cur.execute(
+                    "DELETE FROM operation_snapshot WHERE operation_id=%s",
+                    (op_id,))
+                cur.execute(
+                    "DELETE FROM projection_event WHERE operation_id=%s",
+                    (op_id,))
+                cur.execute(
+                    """UPDATE export_job SET operation_id=NULL
+                       WHERE operation_id=%s""", (op_id,))
+                cur.execute(
+                    "DELETE FROM submission_operation WHERE operation_id=%s",
+                    (op_id,))
+            conn.commit()
+        return True
 
     def list_batches(self, customer_id: int, *,
                      group_id: str | None = None,

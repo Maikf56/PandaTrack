@@ -135,28 +135,33 @@ def create_submission(payload: SubmissionCreate,
     ]
     # P17 修复：目标组生效——传了 target_group_name 挂到该组（不存在则建），
     # 否则挂默认组（04 §5.8）。挂组为后置事务，崩溃最坏情况批次无组可补挂。
+    # 客户显式选组时 override_tracking=True：单号跟随迁移到所选组（客户自由）。
     try:
         if payload.target_group_name:
             gid = repo.resolve_group_by_name(
                 subject.customer_id, payload.target_group_name)
         else:
             gid = repo.ensure_default_group(subject.customer_id)
-        repo.assign_operation_group(subject.customer_id,
-                                    outcome.operation_public_id, gid)
+        repo.assign_operation_group(
+            subject.customer_id, outcome.operation_public_id, gid,
+            override_tracking=bool(payload.target_group_name))
     except Exception:  # 挂组失败不回滚受理（受理已计费），记录后继续
         import logging
         logging.getLogger("pandatrack.api.submissions").warning(
             "group assign failed for operation %s",
             outcome.operation_public_id, exc_info=True)
+    # P17 口径修正：免扣行也是有效单号（valid=全部有效行）；
+    # points_charged=实际扣费数（billable 本身），原 billable-waived
+    # 双重相减在大批免扣时产生负值触发 500「系统繁忙」。
     return SubmissionAccepted(
         operation_id=outcome.operation_public_id,
         total_count=outcome.total_count,
-        valid_count=outcome.billable_count,
-        invalid_count=outcome.total_count - outcome.billable_count,
-        points_charged=outcome.billable_count - outcome.waived_count,
+        valid_count=outcome.total_count,
+        invalid_count=0,
+        points_charged=outcome.billable_count,
         free_count=outcome.waived_count,
         invalid_items=invalid[:100],   # 响应体上限，完整明细在 operation 快照
-        batches=_batch_indices(outcome.billable_count),
+        batches=_batch_indices(outcome.total_count),  # 批次按全部有效行切片
     )
 
 

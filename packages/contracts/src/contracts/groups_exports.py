@@ -9,6 +9,7 @@ class GroupView(BaseModel):
     name: str
     is_default: bool = False
     archived: bool = False
+    remark: str = ""  # 组备注（P18 对标竞品组卡「备注 ✏️」）
     tracking_count: int = 0
     batch_count: int = 0
     status_distribution: dict[str, int] = Field(default_factory=dict)
@@ -20,11 +21,18 @@ class CreateGroupRequest(BaseModel):
 
 
 class RenameGroupRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=50)
+    """组更新（P18 PATCH 语义）：name / remark 至少传一个。"""
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    remark: str | None = Field(default=None, max_length=500)
 
 
 class ArchiveGroupRequest(BaseModel):
     archived: bool
+
+
+class BatchMoveRequest(BaseModel):
+    """批次移动目标组（P17：批次卡「移动分组」操作）。"""
+    target_group_id: str = Field(min_length=1, max_length=50)
 
 
 class BatchView(BaseModel):

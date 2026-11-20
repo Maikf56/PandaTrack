@@ -36,12 +36,8 @@ const router = createRouter({
       component: () => import('../views/BatchTrackingsView.vue'),
       meta: { auth: true },
     },
-    {
-      path: '/results/:id',
-      name: 'tracking-detail',
-      component: () => import('../views/TrackingDetailView.vue'),
-      meta: { auth: true },
-    },
+    // P18 详情页下线：展开卡即详情，旧深链回结果列表
+    { path: '/results/:id', redirect: '/results' },
     { path: '/wallet', name: 'wallet', component: () => import('../views/WalletView.vue'), meta: { auth: true } },
     // 次要页面（04 §5.8-5.12）+ 邀请好友（P15）
     { path: '/imports', name: 'imports', component: () => import('../views/ImportsView.vue'), meta: { auth: true } },

@@ -140,7 +140,6 @@ async function copyNumber() {
         <button class="linklike" :disabled="checking" @click="checkUpdate">
           {{ checking ? t('card.checking') : t('common.check_update') }}
         </button>
-        <RouterLink class="linklike" :to="`/results/${item.id}`">{{ t('card.detail_page') }}</RouterLink>
         <button
           class="linklike tr-toggle"
           :disabled="translating"

@@ -88,6 +88,8 @@ const dist = computed(() => {
 })
 
 const terminalCount = computed(() => items.value.filter((it) => it.is_terminal).length)
+/** 批次查询进度（P18）：未完结 →「正在查询中…」，全部终态 →「上一轮查询结束」。 */
+const batchRunning = computed(() => items.value.length > 0 && terminalCount.value < items.value.length)
 
 function fmtTime(s?: string | null): string {
   if (!s) return '—'
@@ -160,6 +162,13 @@ async function exportBatch() {
           </div>
         </div>
         <StatusDistBar :distribution="dist" :total="items.length" />
+        <p v-if="items.length > 0" class="run-state" :class="{ running: batchRunning }" role="status">
+          <span class="run-dot"></span>
+          <template v-if="batchRunning">
+            {{ t('bt.in_progress', { left: items.length - terminalCount, total: items.length }) }}
+          </template>
+          <template v-else>{{ t('bt.round_done') }}</template>
+        </p>
         <p v-if="checkFeedback" class="ok-box" role="status">{{ checkFeedback }}</p>
       </div>
 
@@ -224,6 +233,24 @@ async function exportBatch() {
 .crumb a { color: var(--fg-soft); text-decoration: none; }
 .crumb a:hover { color: var(--brand); }
 .bhead-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.run-state {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 8px 0 0; font-size: 13px; color: var(--fg-soft);
+}
+.run-state.running { color: var(--brand-strong); font-weight: 500; }
+.run-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: var(--fg-soft); flex-shrink: 0;
+}
+.run-state.running .run-dot {
+  background: var(--brand); animation: run-pulse 1.2s ease-in-out infinite;
+}
+@keyframes run-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--brand-line); opacity: 1; }
+  50% { box-shadow: 0 0 0 5px var(--brand-soft); opacity: 0.6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-state.running .run-dot { animation: none; }
+}
 .actions { display: flex; gap: 8px; }
 .filters { display: flex; gap: 12px; flex-wrap: wrap; }
 .filters input, .filters select { width: auto; min-width: 200px; }

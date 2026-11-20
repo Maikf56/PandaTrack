@@ -8,8 +8,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from contracts.groups_exports import (
-    ArchiveGroupRequest, BatchDetail, BatchView, CreateGroupRequest,
-    GroupView, ImportJobView, RenameGroupRequest,
+    ArchiveGroupRequest, BatchDetail, BatchMoveRequest, BatchView,
+    CreateGroupRequest, GroupView, ImportJobView, RenameGroupRequest,
 )
 from contracts.submission import ImportAccepted, ImportCreate
 from pandatrack_common import codes
@@ -42,7 +42,11 @@ def create_group(payload: CreateGroupRequest,
 def rename_group(group_id: str, payload: RenameGroupRequest,
                  subject: Subject = Depends(require_customer),
                  repo: BRepository = Depends(get_repo)):
-    if not repo.rename_group(subject.customer_id, group_id, payload.name):
+    # P18 PATCH 语义：name / remark 至少传一个
+    if payload.name is None and payload.remark is None:
+        raise ApiProblem(codes.INVALID_INPUT)
+    if not repo.rename_group(subject.customer_id, group_id,
+                             name=payload.name, remark=payload.remark):
         raise ApiProblem(codes.NOT_FOUND)
     groups = [g for g in repo.list_groups(subject.customer_id)
               if g["id"] == group_id]
@@ -98,6 +102,33 @@ def batch_detail(batch_id: str,
     if detail is None:
         raise ApiProblem(codes.NOT_FOUND)
     return BatchDetail(**detail)
+
+
+@router.patch("/batches/{batch_id}", response_model=BatchDetail)
+def move_batch(batch_id: str, payload: BatchMoveRequest,
+               subject: Subject = Depends(require_customer),
+               repo: BRepository = Depends(get_repo)):
+    """批次移动到目标组（P17：批次卡「移动分组」），批次内单号跟随。"""
+    gid = repo.resolve_group_id(subject.customer_id, payload.target_group_id)
+    if gid is None:
+        raise ApiProblem(codes.NOT_FOUND)
+    if not repo.move_batch(subject.customer_id, batch_id, gid):
+        raise ApiProblem(codes.NOT_FOUND)
+    detail = repo.batch_detail(subject.customer_id, batch_id)
+    if detail is None:
+        raise ApiProblem(codes.NOT_FOUND)
+    return BatchDetail(**detail)
+
+
+@router.delete("/batches/{batch_id}")
+def delete_batch(batch_id: str,
+                 subject: Subject = Depends(require_customer),
+                 repo: BRepository = Depends(get_repo)):
+    """删除批次（P17）：移除提交结构，单号查询记录与积分流水保留。"""
+    ok = repo.delete_batch(subject.customer_id, batch_id)
+    if not ok:
+        raise ApiProblem(codes.NOT_FOUND)
+    return {"ok": True, "effect": "批次与提交结构已删除，单号查询记录与积分流水保留"}
 
 
 @router.get("/imports", response_model=list[ImportJobView])
@@ -159,10 +190,12 @@ def create_import(payload: ImportCreate,
                             " file_name, operation_id) VALUES (%s,'accepted',%s,%s,%s,%s) "
                             "RETURNING public_id",
                             (subject.customer_id, len(cleaned.candidates),
-                             outcome.billable_count, payload.file_name, operation_id),
+                             outcome.total_count, payload.file_name, operation_id),
                         )
                         import_public_id = str(cur.fetchone()[0])
                 else:
+                    # P17 口径：done/enqueued/success=全部有效行（受理即解析完成），
+                    # failed=真正无效行，duplicate=30 天免扣（不是失败）。
                     cur.execute(
                         "INSERT INTO import_job (customer_id, status, total, done, "
                         " file_name, enqueued, success_count, failed_count, "
@@ -170,11 +203,11 @@ def create_import(payload: ImportCreate,
                         "VALUES (%s,'accepted',%s,%s,%s,%s,%s,%s,%s,%s) "
                         "RETURNING public_id",
                         (subject.customer_id, len(cleaned.candidates),
-                         outcome.billable_count, payload.file_name,
-                         outcome.billable_count,          # enqueued
-                         outcome.billable_count,          # success_count（受理口径）
-                         len(cleaned.candidates) - outcome.billable_count,  # failed
-                         outcome.waived_count,            # duplicate（30 天免扣）
+                         outcome.total_count, payload.file_name,
+                         outcome.total_count,           # enqueued
+                         outcome.total_count,           # success_count（受理口径）
+                         len(cleaned.candidates) - outcome.total_count,  # failed（无效行）
+                         outcome.waived_count,          # duplicate（30 天免扣）
                          operation_id),
                     )
                     import_public_id = str(cur.fetchone()[0])
@@ -186,27 +219,32 @@ def create_import(payload: ImportCreate,
             conn.rollback()
             raise ApiProblem(codes.INTERNAL_ERROR)
 
-    # P17：目标组生效（与 submissions 同语义）——后置事务，失败不回滚受理
+    # P17：目标组生效（与 submissions 同语义）——后置事务，失败不回滚受理。
+    # 客户显式选组时 override_tracking=True：单号跟随迁移到所选组（客户自由）。
     try:
         if payload.target_group_name:
             gid = repo.resolve_group_by_name(
                 subject.customer_id, payload.target_group_name)
         else:
             gid = repo.ensure_default_group(subject.customer_id)
-        repo.assign_operation_group(subject.customer_id,
-                                    outcome.operation_public_id, gid)
+        repo.assign_operation_group(
+            subject.customer_id, outcome.operation_public_id, gid,
+            override_tracking=bool(payload.target_group_name))
     except Exception:
         import logging
         logging.getLogger("pandatrack.api.imports").warning(
             "group assign failed for operation %s",
             outcome.operation_public_id, exc_info=True)
 
+    # P17 口径修正：免扣行也是有效单号（valid=全部有效行，免扣≠无效/失败）；
+    # points_charged=实际扣费数（billable 本身）。原 billable-waived 双重
+    # 相减在大批免扣时产生负值（如 -1175）触发 500「系统繁忙」。
     return ImportAccepted(
         import_job_id=import_public_id,
         operation_id=outcome.operation_public_id,
         total_count=len(cleaned.candidates),
-        valid_count=outcome.billable_count,
-        invalid_count=len(cleaned.candidates) - outcome.billable_count,
-        points_charged=outcome.billable_count - outcome.waived_count,
+        valid_count=outcome.total_count,
+        invalid_count=len(cleaned.candidates) - outcome.total_count,
+        points_charged=outcome.billable_count,
         free_count=outcome.waived_count,
     )

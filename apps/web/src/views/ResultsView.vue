@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, type GroupView } from '../api/client'
 import { loadSession } from '../composables/session'
@@ -22,7 +22,17 @@ const newName = ref('')
 const busy = ref(false)
 const renameTarget = ref<GroupView | null>(null)
 const renameName = ref('')
+const renameRemark = ref('')
 const deleteTarget = ref<GroupView | null>(null)
+// P18：头部搜索（组名/备注过滤，竞品式工具栏）
+const search = ref('')
+const filteredGroups = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return groups.value
+  return groups.value.filter(
+    (g) => g.name.toLowerCase().includes(q)
+      || (g.remark || '').toLowerCase().includes(q))
+})
 
 onMounted(async () => {
   // 旧深链兼容：/results?op= → 批次页；/results?group= → 组页
@@ -78,15 +88,19 @@ async function createGroup() {
 function openRename(g: GroupView) {
   renameTarget.value = g
   renameName.value = g.name
+  renameRemark.value = g.remark || ''
 }
 
 async function doRename() {
-  if (!renameTarget.value || !renameName.value.trim() || busy.value) return
+  if (!renameTarget.value || busy.value) return
+  const name = renameName.value.trim()
+  if (!name) return
   busy.value = true
   error.value = ''
   try {
     await api.patch<GroupView>(`/api/v1/groups/${renameTarget.value.id}`, {
-      name: renameName.value.trim(),
+      name,
+      remark: renameRemark.value,
     })
     renameTarget.value = null
     await reload()
@@ -135,9 +149,20 @@ async function doDelete() {
       <RouterLink class="btn" to="/submit">{{ t('results.empty_cta') }}</RouterLink>
     </div>
 
-    <div v-else class="groups">
+    <template v-else>
+      <!-- P18 头部工具栏（竞品式）：搜索组名/备注 -->
+      <div class="card toolbar" role="search">
+        <input v-model="search" :placeholder="t('results.group_search_placeholder')" :aria-label="t('results.group_search_aria')" />
+      </div>
+
+      <div v-if="filteredGroups.length === 0" class="card empty-state" role="status">
+        <p>{{ t('results.no_match') }}</p>
+        <button class="btn ghost" @click="search = ''">{{ t('results.clear_filter') }}</button>
+      </div>
+
+      <div v-else class="groups">
       <div
-        v-for="g in groups"
+        v-for="g in filteredGroups"
         :key="g.id"
         class="card gcard"
         role="link" tabindex="0"
@@ -160,12 +185,19 @@ async function doDelete() {
           >{{ t('results.delete') }}</button>
         </div>
         <StatusDistBar :distribution="g.status_distribution" :total="g.tracking_count" />
+        <!-- P18 组备注（竞品式）：点击 ✏️ 编辑 -->
+        <div class="gcard-remark" @click.stop="openRename(g)" role="button" tabindex="0"
+             @keydown.enter.prevent="openRename(g)">
+          <span class="hint">{{ g.remark ? `备注：${g.remark}` : t('results.remark_empty') }}</span>
+          <span class="hint edit-ico" aria-hidden="true">✏️</span>
+        </div>
         <div class="gcard-foot">
           <span class="hint">{{ fmtDate(g.created_at) }}</span>
           <span class="hint enter">{{ t('results.view_batches') }}</span>
         </div>
       </div>
     </div>
+    </template>
 
     <!-- 新建组 -->
     <div v-if="createOpen" class="modal-mask" @click.self="createOpen = false">
@@ -179,11 +211,15 @@ async function doDelete() {
       </div>
     </div>
 
-    <!-- 重命名 -->
+    <!-- 重命名 / 备注（P18 双字段编辑） -->
     <div v-if="renameTarget" class="modal-mask" @click.self="renameTarget = null">
       <div class="modal card" role="dialog" aria-modal="true" :aria-label="t('results.rename')">
         <h3>{{ t('results.rename_title', { name: renameTarget.name }) }}</h3>
+        <label class="field-label">{{ t('results.name_field') }}</label>
         <input v-model="renameName" maxlength="50" @keydown.enter.prevent="doRename" />
+        <label class="field-label remark-label">{{ t('results.remark_field') }}</label>
+        <textarea v-model="renameRemark" maxlength="500" rows="2"
+                  :placeholder="t('results.remark_placeholder')"></textarea>
         <div class="actions">
           <button class="btn" :disabled="!renameName.trim() || busy" @click="doRename">{{ t('results.save') }}</button>
           <button class="btn ghost" @click="renameTarget = null">{{ t('common.cancel') }}</button>
@@ -227,4 +263,16 @@ async function doDelete() {
 }
 .modal { width: min(440px, 92vw); margin: 0; box-shadow: var(--shadow-2); }
 .actions { display: flex; gap: 12px; margin-top: 12px; }
+.toolbar { padding: 12px 16px; }
+.toolbar input { width: 100%; }
+.remark-label { margin-top: 12px; }
+textarea { min-height: 56px; }
+.gcard-remark {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 6px 10px; border-radius: var(--radius-ctl);
+  background: var(--bg); cursor: pointer;
+  transition: background var(--dur) ease-out;
+}
+.gcard-remark:hover { background: var(--brand-soft); }
+.edit-ico { font-size: 12px; }
 </style>

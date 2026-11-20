@@ -167,7 +167,8 @@ body {
   margin: 0;
   color: var(--fg);
   background: var(--bg);
-  font: 15px/1.6 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  /* P18：整体字号统一收敛（14px 基准，竞品式紧凑），微软雅黑优先 */
+  font: 14px/1.6 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, sans-serif;
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
@@ -282,15 +283,15 @@ textarea.big { min-height: 160px; resize: vertical; }
   border-radius: var(--radius-ctl); padding: 10px 14px; margin: 12px 0;
 }
 .badge {
-  display: inline-block; border-radius: var(--radius-badge); padding: 2px 10px;
-  font-size: 13px; font-weight: 600; background: var(--brand-soft); color: var(--brand-strong);
+  display: inline-block; border-radius: var(--radius-badge); padding: 1px 8px;
+  font-size: 12px; font-weight: 600; background: var(--brand-soft); color: var(--brand-strong);
   white-space: nowrap;
 }
 .badge.terminal { background: var(--ok-soft); color: var(--ok); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.err { background: var(--err-soft); color: var(--err); }
-.page-title { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.3px; }
-.page-sub { color: var(--fg-soft); margin: 0 0 20px; }
+.page-title { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.2px; font-weight: 700; }
+.page-sub { color: var(--fg-soft); margin: 0 0 20px; font-size: 13px; }
 table.list { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: var(--radius-panel); overflow: hidden; }
 table.list th, table.list td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 table.list th { color: var(--fg-soft); font-weight: 500; font-size: 13px; }

@@ -157,6 +157,7 @@ export interface GroupView {
   name: string
   is_default: boolean
   archived: boolean
+  remark: string
   tracking_count: number
   batch_count: number
   status_distribution: Record<string, number>

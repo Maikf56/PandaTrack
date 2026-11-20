@@ -68,6 +68,9 @@ def submit(
 
     成功写入后返回 202 结果数据；失败抛异常，调用方回滚。
     """
+    # P17：行内去重（保序）。重复行是客户个人行为，不重复扣费，
+    # 与 estimate 的 set() 口径一致（避免预估与实扣不一致）。
+    normalized_numbers = list(dict.fromkeys(normalized_numbers))
     with conn.cursor() as cur:
         # 1) 锁幂等记录（唯一键 customer_id+endpoint+client_request_id）
         cur.execute(
@@ -121,12 +124,14 @@ def submit(
         new_balance = balance - billable_count
 
         # 5) 写 operation 头（对外 UUID）
+        # P17 口径修正：valid_count=有效单号数（清洗有效即有效，30 天免扣
+        # 也是有效单号，不是无效行）；points_charged=实际扣费行数。
         op_public_id = str(uuid.uuid4())
         cur.execute(
             "INSERT INTO submission_operation "
             " (public_id, customer_id, state, total_count, valid_count, invalid_count, points_charged) "
             "VALUES (%s,%s,'accepted',%s,%s,0,%s) RETURNING operation_id",
-            (op_public_id, customer_id, total_count, total_count - waived_count,
+            (op_public_id, customer_id, total_count, total_count,
              billable_count),
         )
         operation_id = cur.fetchone()[0]
